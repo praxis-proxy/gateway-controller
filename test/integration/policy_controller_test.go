@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -17,14 +18,19 @@ import (
 
 func waitForCache(ctx context.Context, obj client.Object) {
 	key := client.ObjectKeyFromObject(obj)
-	rv := obj.GetResourceVersion()
-	Eventually(func() string {
+	minRV, err := strconv.Atoi(obj.GetResourceVersion())
+	Expect(err).NotTo(HaveOccurred())
+	Eventually(func() int {
 		current := obj.DeepCopyObject().(client.Object)
-		if err := mgrClient.Get(ctx, key, current); err != nil {
-			return ""
+		if getErr := mgrClient.Get(ctx, key, current); getErr != nil {
+			return 0
 		}
-		return current.GetResourceVersion()
-	}).Should(Equal(rv))
+		rv, parseErr := strconv.Atoi(current.GetResourceVersion())
+		if parseErr != nil {
+			return 0
+		}
+		return rv
+	}).Should(BeNumerically(">=", minRV))
 }
 
 var _ = Describe("Policy Controller", func() {

@@ -41,6 +41,13 @@ func TestIntegration(t *testing.T) {
 		t.Fatalf("setup indexes: %v", err)
 	}
 
+	if err := (&controller.ProxyReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		t.Fatalf("setup proxy reconciler: %v", err)
+	}
+
 	if err := (&controller.TenantReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),

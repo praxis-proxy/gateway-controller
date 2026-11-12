@@ -137,6 +137,15 @@ var _ = Describe("Proxy CRD", func() {
 			func(spec *proxyv1alpha1.ProxySpec) { spec.Listeners[0].Port = 0 }),
 		Entry("a listener port above the maximum", "port-too-high",
 			func(spec *proxyv1alpha1.ProxySpec) { spec.Listeners[0].Port = 65536 }),
+		Entry("a filter entry with neither ref nor inlineFilter", "no-ref-no-inline",
+			func(spec *proxyv1alpha1.ProxySpec) {
+				spec.FilterChains = []proxyv1alpha1.ProxyFilterChain{{
+					Name: "chain",
+					Filters: []proxyv1alpha1.PraxisFilterEntry{
+						{Name: "empty"},
+					},
+				}}
+			}),
 	)
 
 	// Verify that valid port boundaries are accepted
