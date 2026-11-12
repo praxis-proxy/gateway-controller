@@ -4,6 +4,8 @@
 
 Use Praxis to serve KServe-hosted models behind the platform's chosen Gateway API provider. The gateway forwards requests to Praxis. Praxis parses, applies policy, chooses a model provider and asks KServe's endpoint picker (EPP) which model-server pod should handle the request.
 
+**Scope note:** Praxis is likely to support Gateway API in the future. That would make a separate Gateway API Gateway backed by Praxis an additional option for KServe integration. This proposal focuses on using AI Gateway with KServe behind other Gateway API providers and does not depend on that future support.
+
 ## Expected user flows
 
 A Gateway from the chosen GWAPI provider must already be available.
@@ -164,3 +166,7 @@ ModelProvider acceptance alone does not satisfy that check. How KServe recognise
 The portability boundary is standard [HTTPRoute-to-Service routing](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/). The ingress provider needs no inference extension or provider-specific EPP filter. It must support the required HTTP and streaming behaviour; buffering, timeout and TLS defaults can differ.
 
 Routing ingress directly to an InferencePool would require the ingress provider's inference integration and bypass Praxis's serving path. Requiring Praxis to supply ingress would constrain provider choice. Keeping Praxis behind a Service preserves that choice, at the cost of an additional HTTP proxy hop and a per-request EPP callout. 
+
+Path-based model routing is not automatically preserved when an HTTPRoute targets a shared Praxis Service. Without implementing Gateway API in Praxis, preserving it requires an explicit handoff from ingress. 
+- One possible workaround is for the HTTPRoute to use `RequestHeaderModifier.set` to supply `x-ai-gateway-model-published-name`, containing the Model's published name. The Gateway provider retains path matching, rewriting and route status ownership.
+The Gateway-Controller would watch routes targeting its managed Praxis Services, validate the Model binding and generate header-based model selection and filter conditions.
