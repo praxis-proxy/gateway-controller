@@ -48,10 +48,11 @@ readiness for the current specification.
 | Tenant | Its configuration is valid and its namespace ownership is accepted without conflict. |
 | AIGateway | Its Tenant is ready, gateway configuration and required references are valid, the generated configuration is applied, and the backing runtime reports ready for that configuration. |
 | ModelProvider | Its Tenant is ready, its format and connection target are valid, any Service reference resolves, and configured credential references and Secret keys resolve and are authorized. |
-| Model | Its Tenant and referenced ModelProviders are ready, its configuration is valid, it wins any published-name conflict, and it is configured on every gateway belonging to its Tenant, each of which must be ready. |
+| Model | Its Tenant and referenced ModelProviders are ready, its configuration is valid, it wins any published-name conflict, and it is configured on every inference-enabled gateway belonging to its Tenant, each of which must be ready. |
 
-A Model with no gateways has `Ready=False`, reason `DependencyNotReady`, and a
-message explaining why. Tenant and ModelProvider readiness require no consumers.
+A Model with no inference-enabled gateways has `Ready=False`, reason
+`DependencyNotReady`, and a message explaining why. Tenant and ModelProvider
+readiness require no consumers.
 
 ### Example
 
@@ -141,26 +142,43 @@ A deferred composition resource for reusable gateway configuration.
 ### Definition
 
 An AIGateway declares a gateway that exposes AI services for one Tenant. A Tenant
-may have multiple AIGateways. Each gateway declares its runtime, endpoint,
-protocols, and governance directly on the resource in v1alpha1.
+may have multiple AIGateways. Each gateway declares its runtime, shared endpoint,
+inference and MCP capabilities, and governance directly on the resource in v1alpha1.
 
 | Field | Purpose |
 | --- | --- |
 | `tenantRef` | Required, immutable reference to the Tenant the gateway belongs to. |
 | `runtime` | Gateway runtime settings, such as replica count. |
-| `endpoint` | Gateway exposure settings, such as port and TLS certificate reference. |
-| `protocols` | Inbound protocol configuration grouped by category: `llm` for LLM protocols and `mcp` for MCP traffic. |
+| `endpoint` | Shared gateway exposure settings: port and optional TLS certificate reference. |
+| `inference` | Optional inference capability with explicitly selected inference APIs. |
+| `mcp` | Optional MCP capability; an empty stanza enables MCP. |
 | `governance` | Inline governance configuration, including authentication identities. |
 
-Authentication is configured primarily on the gateway. Custom protocol
-extension properties and templates are deferred.
+Gateway governance applies to inference and MCP processing on the shared listener.
+Authentication is configured on the gateway; capability-specific governance
+overrides, custom API extension properties, and templates are deferred.
 
-### Protocol configuration
+### Capability configuration
 
-Under `protocols.llm`, `chatCompletions` and `responses` are named configuration
-stanzas. Each stanza can contain properties specific to that type of traffic,
-including Secret references for connections to storage layers and other
-dependencies. An empty stanza enables the protocol without additional settings.
+`spec.endpoint` configures the shared HTTP listener. It requires a `port` in the
+range 1–65535, with no default. Optional `endpoint.tls.certificateRef` selects a
+TLS certificate Secret in the gateway's namespace.
+
+`spec.inference` and `spec.mcp` select capabilities served through that endpoint.
+At least one must be configured; omission disables that capability. An empty
+`mcp: {}` stanza enables MCP without additional capability settings.
+
+Under `inference`, `chatCompletions` and `responses` are named API configuration
+stanzas. Omission disables that API; an empty stanza selects it without
+additional settings. An `inference` block must select at least one API. API
+stanzas can carry traffic-specific settings and dependency references, such as
+`inference.responses.conversationState.secretRef`.
+
+Selected inference APIs and HTTP-based MCP share the listener. The controller
+generates request method/path dispatch to their processing chains. Port and TLS
+settings belong to `endpoint`, not to either capability. Models and ModelProviders
+supply model access and upstream configuration; enabling inference alone does
+not publish a model.
 
 ### Namespace and tenancy
 
@@ -171,6 +189,11 @@ by name in the gateway's namespace.
 
 - `tenantRef` is required, immutable after creation, and must resolve to a Tenant
   in the gateway's namespace.
+- At least one of `inference` or `mcp` must be configured. An `inference` block
+  must select at least one supported API.
+- `endpoint` is required, with a port in the range 1–65535.
+- A configured `endpoint.tls` block requires `certificateRef`, resolving in the
+  gateway's namespace.
 - Each `governance.authentication` entry uses a `type` discriminator matching a
   Tenant `authorizedIdentities` entry. A subset of authorized types is allowed.
 - Tenant identity constraints validate type membership only; provider properties
@@ -178,8 +201,8 @@ by name in the gateway's namespace.
 
 ### Example
 
-This gateway references the Tenant above and configures its authorized `OIDC`
-authentication type inline.
+This gateway serves Chat Completions, Responses and MCP through one TLS endpoint
+on port 8443. Its gateway authentication configuration applies to all three APIs.
 
 ```yaml
 apiVersion: aigateway.praxis.io/v1alpha1
@@ -197,13 +220,13 @@ spec:
     tls:
       certificateRef:
         name: gateway-tls
-  protocols:
-    llm:
-      chatCompletions: {}
-      responses:
-        conversationState:
-          secretRef:
-            name: responses-state
+  inference:
+    chatCompletions: {}
+    responses:
+      conversationState:
+        secretRef:
+          name: responses-state
+  mcp: {}
   governance:
     authentication: #gateway access auth not gateway administration auth
       - type: OIDC
@@ -230,7 +253,9 @@ The TLS certificate Secret `gateway-tls` and storage connection Secret
 - Tenant authorization checks on identity provider properties beyond the
   authentication type.
 - Enforcing gateway governance at the Tenant level.
-- Custom protocol extension properties and templates.
+- Capability-specific governance overrides, custom API extension properties,
+  and templates.
+- Multiple endpoints per gateway or capability-specific port/TLS settings.
 
 ## ModelProviderConfig
 
@@ -379,8 +404,10 @@ A Model must be in the same namespace as its Tenant and must reference that
 Tenant through `spec.tenantRef`. ModelProvider references resolve in the Model's
 namespace and must belong to the same Tenant.
 
-By default, a Model is exposed on every AIGateway belonging to its Tenant, all in
-the same namespace. No explicit gateway reference is provided in v1alpha1.
+By default, a Model is exposed through the selected inference APIs on every
+inference-enabled AIGateway belonging to its Tenant, all in the same namespace.
+MCP-only gateways do not expose Models. No explicit gateway reference is provided
+in v1alpha1.
 
 ### Validation
 
@@ -404,8 +431,8 @@ reason `Conflict`, and a message identifying the winner.
 
 ### Example
 
-This Model publishes `alpha-chat` through every gateway owned by `team-alpha`.
-It uses gateway OIDC authentication and requires the verified `groups` claim to
+This Model publishes `alpha-chat` through every inference-enabled gateway owned
+by `team-alpha`. It uses gateway OIDC authentication and requires the verified `groups` claim to
 include `alpha-model-users`; a missing claim or group fails authorization.
 
 ```yaml

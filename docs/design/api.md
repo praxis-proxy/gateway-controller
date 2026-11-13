@@ -20,7 +20,7 @@ A small set of Kubernetes CRDs in group aigateway.praxis.io/v1alpha1 that let op
     
 3. Compose via the favoured patterns only. Inheritance, extension references, generation templates, facade. No policy-attachment metaresources; no user-facing defaults/overrides merge across policy objects.
     
-4. One unified consumer surface, one canonical internal format. Consumers may speak more than one inbound protocol (OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, plus MCP/A2A), declared as the gateway's protocols. The gateway normalises every inbound request to a single canonical internal format — OpenAI Chat Completions — governs it there, and translates out to each provider's native format. This keeps translation N+M (inbound→canonical, then canonical→provider), never N×M, and means governance (policy/PPE) always inspects the canonical shape regardless of front door or backend. Provider selection, body-based routing and protocol translation are consequences of registering models and declaring inbound protocols, never hand-written routes.
+4. One unified consumer surface, one canonical internal format. Consumers may speak more than one inbound inference API (OpenAI Chat Completions, OpenAI Responses, Anthropic Messages), selected under the gateway's `inference` capability; `mcp` enables MCP on the shared endpoint, and A2A remains a future capability. The gateway normalises inference requests to a single canonical internal format — OpenAI Chat Completions — governs them there, and translates out to each provider's native format. This keeps translation N+M (inbound→canonical, then canonical→provider), never N×M, and means governance (policy/PPE) always inspects the canonical shape regardless of front door or backend. Provider selection, body-based routing and protocol translation are consequences of registering models and selecting inference APIs, never hand-written routes.
     
 5. The Tenant Standard is load-bearing. One authoritative tenant identity, established at authentication, carried across auth, policy, rate limits, metering, credentials, routing, logs and traces — never derived from unauthenticated client headers.
     
@@ -117,7 +117,7 @@ under `governance.authentication` on the gateway or its proposed base config.
 Proposed alternative to the Tenant structure above; the existing proposal remains for comparison.
 
 - **Tenant** defines `authorizedIdentities`, the namespaces authorized to consume the tenant's configuration, and the source Secrets in `authorizedCredentials` that may be shared. It references the tenant's AIGatewayConfig.
-- **AIGatewayConfig** defines that tenant's gateway template and defaults: runtime, protocols, and governance, including authentication and revocation configuration. Defaults are owned by the tenant; this alternative does not require a fleet-wide defaults resource.
+- **AIGatewayConfig** defines that tenant's gateway template and defaults: runtime, shared endpoint, inference/MCP capabilities, and governance, including authentication and revocation configuration. Defaults are owned by the tenant; this alternative does not require a fleet-wide defaults resource.
 - Source Secret references resolve in the Tenant's namespace. The controller synchronizes the declared Secrets into authorized namespaces containing consuming gateways. An allowed namespace alone does not trigger distribution without a consuming gateway.
 - The Tenant's namespace allowlist authorizes consumption. A gateway reference alone cannot grant access to another tenant's configuration or credentials.
 - Gateways use the referenced AIGatewayConfig as their blueprint and may override permitted defaults. Overrides cannot change Tenant namespace authorization or Secret-sharing permissions; mandatory controls must be distinguished from defaults.
@@ -162,7 +162,8 @@ metadata:
   namespace: tenant-alpha-system
 spec:
   runtime: { replicas: 2 }
-  protocols: { llm: { chatCompletions: {}, responses: {} } }
+  endpoint: { port: 8443 }
+  inference: { chatCompletions: {}, responses: {} }
   governance:
     authentication:
       - type: OIDC
@@ -193,8 +194,12 @@ kind: AIGatewayConfig
 metadata: { name: fleet-defaults, namespace: ai-gateway-system }
 spec:
   runtime: { image: "registry.example.com/praxis-ai:VERSION", replicas: 2 }
-  endpoint: { port: 8443, tls: { certificateRef: { name: fleet-tls } } }
-  protocols: { llm: { chatCompletions: {}, responses: {} } }  # inbound LLM protocol stanzas
+  endpoint:
+    port: 8443
+    tls: { certificateRef: { name: fleet-tls } }
+  inference:
+    chatCompletions: {}
+    responses: {}
   governance:                                          # fleet-wide safe defaults, inline
     authentication: [ { type: OIDC, issuerURL: "https://sso.example.com", audiences: [maas] } ]
     guardrails:
@@ -210,25 +215,21 @@ spec:
   baseRef: { name: fleet-defaults }                    # inherit everything above…
   tenantRef: { name: team-alpha }                      # …belongs to exactly one Tenant (immutable)
   runtime: { replicas: 3 }                             # …override only what differs
-  protocols:
-    llm:
-      chatCompletions: {}
-      responses: {}
-      messages: {}                                    # Anthropic Messages → canonical Chat Completions (§2, principle #4)
-    mcp: {}
-  # endpoints: [ ... ]                                   # FUTURE (card in the sleeve): list form with an optional
-  #                                                      # per-endpoint `governance` that overrides the top-level
-  #                                                      # block for that one listener — see note below
+  inference:                                          # shared endpoint inherited from the base
+    chatCompletions: {}
+    responses: {}
+    messages: {}                                      # broader proposal: Anthropic Messages → canonical Chat Completions
+  mcp: {}
   # proxyRef: { name: team-alpha-proxy }               # ESCAPE HATCH (facade): bring your own Proxy
 ```
 
-Note — per-endpoint governance (deferred). governance is top-level here: one scheme for the whole gateway (all listeners). Where a gateway exposes several listeners (via protocols / multiple endpoints → one Proxy listener + one inline filter chain each), differing per-listener schemes are already reachable through the consumable endpoints — Model, MCPServer, Agent each carry their own governance, and protocols route to different kinds (chat→Model, MCP→MCPServer, A2A→Agent). If a genuine per-listener floor (distinct from per-consumable-endpoint) is ever needed, the intended extension is additive, not a move: expand endpoint into an endpoints[] list where each entry may carry an optional governance that overrides the top-level block for that listener only, composed by baseRef inheritance and lowering to that listener's inline filter chain. We deliberately considered and rejected achieving this by merging multiple AIGateway CRs into one Proxy: that reintroduces merge/attachment semantics (disfavoured §3), creates shared-proxy ownership/lifecycle ambiguity, collides on instance-level fields (runtime/service), and breaks the one-AIGateway = one-proxy = one-tenant spine (§10). Keeping it a card in the sleeve for now.
+Gateway governance applies to inference and MCP processing on the shared listener. Model, MCPServer and Agent governance adds resource-specific controls. Capability-specific governance overrides and multiple endpoints per gateway are deferred. Each AIGateway owns one Proxy.
 
-Note — inbound protocols (consumer format). Protocol entries are the gateway's inbound API surfaces, grouped by category and declared per gateway (listener-level), matching how real deployments run one listener per front-door format. `protocols.llm.chatCompletions` and `protocols.llm.responses` are OpenAI-family surfaces; `protocols.llm.messages` is the Anthropic Messages (/v1/messages) front door. Each LLM entry is a configuration stanza that may carry traffic-specific properties and dependency references; `protocols.mcp` remains a separate category. All non-canonical inbound formats are normalised to the canonical internal format before governance (§2, principle #4), so adding a front door is one protocol stanza plus the generated inbound-translation filter, not a new concept. Serving several inbound formats on one listener (path-multiplexed, e.g. /v1/messages and /v1/chat/completions together) is a deferred card — today each format is its own listener.
+`spec.endpoint` supplies the shared port and optional TLS configuration. After inheritance, the effective gateway configuration requires an endpoint with a port and at least one capability (`spec.inference` or `spec.mcp`). Omitting a capability disables it; `mcp: {}` enables MCP. Under `inference`, individual API stanzas such as `chatCompletions` and `responses` must be explicitly selected; an empty stanza selects that API, and an inference block with no selected API is invalid. Selected inference APIs and HTTP-based MCP share one listener, with generated request method/path dispatch. The broader proposal also illustrates `inference.messages`; its inclusion does not expand v1alpha1 scope. Non-canonical inference formats are normalised before governance (§2, principle #4).
 
-#### 5.2.1 Protocol storage
+#### 5.2.1 Inference API storage
 
-A protocol entry may declare storage dependencies needed by its gateway-managed implementation. For Responses, these include conversation/response state, file search, and file access. Each dependency is a Kubernetes Secret reference. The Secret carries the connection type, endpoint, credentials, and adapter-specific connection options; the protocol entry carries the reference and feature behavior such as retention.
+An inference API stanza may declare storage dependencies needed by its gateway-managed implementation. For Responses, these include conversation/response state, file search, and file access. Each dependency is a Kubernetes Secret reference. The Secret carries the connection type, endpoint, credentials, and adapter-specific connection options; the API stanza carries the reference and feature behavior such as retention.
 
 This uses the existing reference-based composition model without introducing a Storage CRD. Backend selection lives in the Secret, so the AIGateway does not repeat a backend type alongside the reference.
 
@@ -238,17 +239,19 @@ kind: AIGateway
 metadata: { name: team-alpha-gw, namespace: team-alpha }
 spec:
   tenantRef: { name: team-alpha }
-  protocols:
-    llm:
-      responses:
-        conversationState:
-          secretRef: { name: responses-state }
-          retention: 7d
-        # Optional dependencies when the gateway implements these features:
-        # fileSearch:
-        #   secretRef: { name: responses-vector-search }
-        # files:
-        #   secretRef: { name: responses-files }
+  endpoint:
+    port: 8443
+    tls: { certificateRef: { name: gateway-tls } }
+  inference:
+    responses:
+      conversationState:
+        secretRef: { name: responses-state }
+        retention: 7d
+      # Optional dependencies when the gateway implements these features:
+      # fileSearch:
+      #   secretRef: { name: responses-vector-search }
+      # files:
+      #   secretRef: { name: responses-files }
 ---
 apiVersion: v1
 kind: Secret
@@ -263,7 +266,7 @@ These are proposed control-plane fields. The connection discriminator is `string
 
 The dependency roles remain distinct:
 
-|Responses field (under `protocols.llm.responses`)|Purpose|
+|Responses field (under `inference.responses`)|Purpose|
 |---|---|
 |conversationState|Persist responses and conversation items, retrieve stored responses, and restore context for subsequent turns.|
 |fileSearch|Connect to the retrieval service used to execute hosted file search. The Secret may describe a vector-store HTTP API rather than a direct vector database connection.|
@@ -485,13 +488,13 @@ Note — deterministic ordering. The order above is one explicitly-ordered chain
 
 ## 8. Lowering to the core proxy (the facade in action)
 
-The AI-Gateway controller generates and owns core praxis.io/v1alpha1 resources: AIGateway+AIGatewayConfig → a Proxy (listeners from endpoint) whose spec.filterChains[] holds one inline chain per protocol (the AI filters), each listener naming the chains that apply. The operator never sees these.
+The AI-Gateway controller generates and owns core praxis.io/v1alpha1 resources: AIGateway+AIGatewayConfig → a Proxy with a shared listener derived from `endpoint`. Its spec.filterChains[] contains the ordered processing chains, and the listener names the applicable chains. Generated request method/path dispatch selects the enabled inference or MCP processing. The operator never sees these resources.
 
 |AI-Gateway concept|Lowers to|Provisioned by|
 |---|---|---|
-|AIGateway/AIGatewayConfig endpoint/runtime/service|Proxy listeners + Deployment/Service|core proxy / praxis-operator|
-|`protocols.llm`: {chatCompletions, responses, messages}; `protocols.mcp`|one inline chain per protocol in Proxy.spec.filterChains[] (generated AI filters)|praxis-ai|
-|non-canonical inbound protocols (e.g. `protocols.llm.messages`)|inbound-translation filters (anthropic_messages_to_chat_completions(_stream), path rewrite, header strip) normalising to canonical before policy|praxis-ai|
+|AIGateway/AIGatewayConfig endpoint/runtime/service|Shared Proxy listener + Deployment/Service|core proxy / praxis-operator|
+|`inference`: {chatCompletions, responses, messages}; `mcp`|API dispatch and ordered processing chains in Proxy.spec.filterChains[], referenced by the shared listener|praxis-ai|
+|non-canonical inbound APIs (e.g. `inference.messages`)|inbound-translation filters (anthropic_messages_to_chat_completions(_stream), path rewrite, header strip) normalising to canonical before policy|praxis-ai|
 |ModelProvider (backend)|load_balancer cluster + endpoints|praxis|
 |Model|model_to_provider (publishedName → cluster + target model) + canonical→provider format translation (after policy, e.g. openai_chat_completions_to_anthropic(_stream))|praxis-ai|
 |MCPServer / Agent|MCP classify+route + catalog brokering / A2A classify+route|praxis-ai|
@@ -515,7 +518,7 @@ template  →  + AIGatewayConfig (baseRef defaults)  →  + AIGateway (instance 
 
   
 
-The template carries what is always present and stable (e.g. the baseline filters every inference chain needs, in order); AIGatewayConfig layers the fleet's safe defaults; the AIGateway instance layers what differs. Fields inferred from a single high-level knob — a protocols entry inducing a translation filter, a Model inducing a routing entry — are merged in by the controller the same way.
+The template carries what is always present and stable (e.g. the baseline filters every inference chain needs, in order); AIGatewayConfig layers the fleet's safe defaults; the AIGateway instance layers what differs. Fields inferred from a single high-level knob — an inference API stanza inducing a translation filter, a Model inducing a routing entry — are merged in by the controller the same way.
 
 Templates are decoupled from controller code — shipped as a ConfigMap created when the AI Gateway controller is installed — so operators can adjust the generated low-level shape (add a standing filter, change an ordering, set a default) without a controller release. This is where the genuinely complex generated structures live (the long, mixed filter chains of a Proxy), kept out of code and out of the user-facing CRDs alike. It is also the mechanism behind inheritance (§5.2): baseRef is realised as the middle merge layer here. The strategic merge is a render step that produces one resource; it is not the disfavoured user-facing defaults/overrides merge across policy objects (§3).
 
@@ -619,4 +622,4 @@ The hard constraint: the rendered Praxis config has exactly one owner. The Gatew
     
 9. Tokenomics altitude boundary (§6.1) — parked pending discussion. Two knobs are deliberately held back in the first cut, to be revisited together: (a) soft tiers (S1) + enforcement: Soft are escape-only for now — promote to first-class if the discussion favours it; (b) token-type capture is a single filter-wide preset for now — revisit for mixed-format gateways (per-provider capture derived from ModelProvider.format, or an explicit per-provider override) if one gateway must front providers of differing formats. Also still open: H1's identity resolution — org/team headers are set by a trusted upstream (the spec's non-goal); is that the Tenant/PPE identity layer's job, and how is that trust boundary expressed in the API?
     
-10. Inbound-protocol translation fidelity (§2 principle #4, §7) — the canonical-internal-format invariant assumes every inbound protocol round-trips cleanly through OpenAI Chat Completions. Where does it leak? Candidate concerns: fields with no canonical equivalent (Anthropic system-prompt blocks, tool-use shapes), token-usage field divergence across formats (so token_count reconciles the right numbers — relates to §6.1 capture), and whether a per-listener governance floor (the §5.2 deferred card) is needed when inbound formats on different listeners warrant different auth (e.g. Anthropic x-api-key vs OIDC bearer). Path-multiplexed multi-format listeners stay a deferred card.
+10. Inbound-protocol translation fidelity (§2 principle #4, §7) — the canonical-internal-format invariant assumes every inbound protocol round-trips cleanly through OpenAI Chat Completions. Where does it leak? Candidate concerns: fields with no canonical equivalent (Anthropic system-prompt blocks, tool-use shapes), token-usage field divergence across formats (so token_count reconciles the right numbers — relates to §6.1 capture), and whether finer governance scoping is needed when inbound formats warrant different auth (e.g. Anthropic x-api-key vs OIDC bearer). The shared listener uses gateway governance; finer overrides remain deferred.
