@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -27,8 +28,23 @@ func (r *ProxyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err := r.Get(ctx, req.NamespacedName, &proxy); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	patch := client.MergeFrom(proxy.DeepCopy())
 
-	logger.Info("reconciling proxy", "name", proxy.Name, "namespace", proxy.Namespace)
+	logger.V(1).Info("reconciling proxy")
+
+	proxy.Status.ObservedGeneration = proxy.Generation
+
+	if validationErrs := validateProxySpec(&proxy.Spec); len(validationErrs) > 0 {
+		setCondition(&proxy.Status.Conditions, proxyv1alpha1.ConditionTypeAccepted,
+			metav1.ConditionFalse, "ValidationError", joinValidationErrors(validationErrs), proxy.Generation)
+	} else {
+		setCondition(&proxy.Status.Conditions, proxyv1alpha1.ConditionTypeAccepted,
+			metav1.ConditionTrue, "Valid", "Proxy specification is valid", proxy.Generation)
+	}
+
+	if err := r.Status().Patch(ctx, &proxy, patch); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
