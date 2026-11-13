@@ -97,13 +97,23 @@ tidy: ## Tidy go.mod and go.sum.
 
 ##@ Test
 
+GINKGO_PARALLEL ?= false
+GINKGO_PROCS ?= 2
+GINKGO_FLAGS := -v --race --randomize-all --randomize-suites
+ifeq ($(GINKGO_PARALLEL),true)
+	GINKGO_FLAGS += -p --procs=$(GINKGO_PROCS)
+endif
+
 # Unit tests are hermetic: no cluster, no envtest binaries, no network.
+.PHONY: test-unit
+test-unit: ## Run unit tests.
+	go test -race -v $(GO_TEST_FLAGS) ./api/... ./cmd/... ./internal/...
+
 .PHONY: test
-test: ## Run unit tests.
-	go test -v $(GO_TEST_FLAGS) ./api/... ./cmd/... ./internal/...
+test: test-unit ## Convenience alias for test-unit.
 
 .PHONY: test-integration
-test-integration: manifests generate setup-envtest ## Run integration tests against envtest.
+test-integration: manifests generate setup-envtest ginkgo ## Run integration tests against envtest.
 	@K8S_VERSION="$(ENVTEST_K8S_VERSION)"; \
 	if [ -z "$$K8S_VERSION" ]; then echo "ERROR: Failed to detect Kubernetes version"; exit 1; fi; \
 	KUBEBUILDER_ASSETS="$$("$(ENVTEST)" use "$$K8S_VERSION" --bin-dir "$(LOCALBIN)" -p path)" || { \
@@ -113,11 +123,13 @@ test-integration: manifests generate setup-envtest ## Run integration tests agai
 		echo "ERROR: envtest reported no asset path for Kubernetes $$K8S_VERSION"; exit 1; \
 	fi; \
 	export KUBEBUILDER_ASSETS; \
-	go test $(GO_TEST_FLAGS) -v ./test/integration/...
+	echo "$(GINKGO) $(GINKGO_FLAGS) ./test/integration/..."; \
+	$(GINKGO) $(GINKGO_FLAGS) ./test/integration/...
 
 .PHONY: test-e2e
-test-e2e: ## Run e2e tests against a kind cluster (see kind-up).
-	go test $(GO_TEST_FLAGS) -timeout 30m ./test/e2e/...
+test-e2e: ginkgo ## Run e2e tests against a kind cluster (see kind-up).
+	@echo "$(GINKGO) $(GINKGO_FLAGS) --timeout=30m ./test/e2e/..."
+	$(GINKGO) $(GINKGO_FLAGS) --timeout=30m ./test/e2e/...
 
 .PHONY: coverage
 coverage: setup-envtest ## Run unit and integration tests with coverage.
@@ -202,6 +214,7 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 ACTIONLINT ?= $(LOCALBIN)/actionlint
 SHELLCHECK ?= $(LOCALBIN)/shellcheck
 KIND ?= $(LOCALBIN)/kind
+GINKGO ?= $(LOCALBIN)/ginkgo
 
 ## Tool Versions
 CONTROLLER_TOOLS_VERSION ?= v0.23.0
@@ -210,6 +223,8 @@ KUSTOMIZE_VERSION ?= v5.8.1
 ACTIONLINT_VERSION ?= v1.7.12
 SHELLCHECK_VERSION ?= v0.11.0
 KIND_VERSION ?= v0.33.0
+# Resolved from go.mod so ginkgo version matches the test suite
+GINKGO_VERSION ?= $(call gomodver,github.com/onsi/ginkgo/v2)
 # Resolved from go.mod so the envtest tooling cannot drift from the libraries
 # it must match.
 ENVTEST_VERSION ?= $(call gomodver,sigs.k8s.io/controller-runtime)
@@ -274,6 +289,11 @@ $(ENVTEST): | $(LOCALBIN)
 kind: $(KIND) ## Install kind locally if necessary.
 $(KIND): | $(LOCALBIN)
 	$(call go-install-tool,$(KIND),sigs.k8s.io/kind,$(KIND_VERSION))
+
+.PHONY: ginkgo
+ginkgo: $(GINKGO) ## Install ginkgo locally if necessary.
+$(GINKGO): | $(LOCALBIN)
+	$(call go-install-tool,$(GINKGO),github.com/onsi/ginkgo/v2/ginkgo,$(GINKGO_VERSION))
 
 # go-install-tool installs $2@$3 as $1-$3 and links $1 to it, so that changing
 # a pinned version reinstalls rather than silently reusing the old binary.
