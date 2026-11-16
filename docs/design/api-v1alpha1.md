@@ -105,6 +105,13 @@ Future namespace membership and cross-namespace `tenantRef` resolution are
 intended as additive extensions, allowing a Tenant to span workload namespaces
 and be defined outside them. They are out of scope for v1alpha1.
 
+### Namespace ownership conflicts
+
+Where several Tenants exist in one namespace, the earliest
+`metadata.creationTimestamp` wins; ties use `metadata.name` in lexicographic
+ascending order. Only the winner owns the namespace. Losing Tenants report
+`Ready=False`, reason `Conflict`, and a message identifying the winner.
+
 ### Example
 
 This Tenant allows OIDC and API key authentication. Its authorized upstream
