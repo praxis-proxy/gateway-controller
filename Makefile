@@ -128,7 +128,6 @@ test-integration: manifests generate setup-envtest ginkgo ## Run integration tes
 
 .PHONY: test-e2e
 test-e2e: ginkgo ## Run e2e tests against a kind cluster (see kind-up).
-	@echo "$(GINKGO) $(GINKGO_FLAGS) --timeout=30m ./test/e2e/..."
 	$(GINKGO) $(GINKGO_FLAGS) --timeout=30m ./test/e2e/...
 
 .PHONY: coverage

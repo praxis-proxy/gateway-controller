@@ -168,8 +168,14 @@ deploy_controller() {
     restore_kustomization
     trap - EXIT
 
-    ${KUBECTL} wait --namespace gateway-controller-system \
-        --for=condition=available deployment/gateway-controller-controller-manager \
+    # IMG is a fixed tag, so on a repeat run the apply above is a no-op and
+    # the pod keeps its old binary. Roll it, and wait on the new ReplicaSet:
+    # --for=condition=available returned at once, satisfied by the pod being
+    # replaced.
+    ${KUBECTL} rollout restart --namespace gateway-controller-system \
+        deployment/gateway-controller-controller-manager
+    ${KUBECTL} rollout status --namespace gateway-controller-system \
+        deployment/gateway-controller-controller-manager \
         --timeout=180s
 }
 

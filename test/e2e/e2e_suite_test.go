@@ -16,9 +16,13 @@ const managerNamespace = "gateway-controller-system"
 var k8sClient client.Client
 
 func TestE2E(t *testing.T) {
+	// Fail rather than skip when there is no cluster. Both go test and ginkgo
+	// report a skipped suite as passing, so skipping makes a run that tested
+	// nothing indistinguishable from one that tested everything. In CI, where
+	// `make kind-up` runs first, that turns a broken cluster into a green run.
 	cfg, err := ctrlconfig.GetConfig()
 	if err != nil {
-		t.Skipf("no reachable cluster, skipping e2e: %v", err)
+		t.Fatalf("e2e requires a cluster: run `make kind-up` first: %v", err)
 	}
 
 	k8sClient, err = client.New(cfg, client.Options{Scheme: utils.NewScheme(t)})
