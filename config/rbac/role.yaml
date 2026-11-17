@@ -8,20 +8,11 @@ rules:
   - aigateway.praxis.io
   resources:
   - aigateways
+  - tenants
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
   - watch
-- apiGroups:
-  - aigateway.praxis.io
-  resources:
-  - aigateways/finalizers
-  verbs:
-  - update
 - apiGroups:
   - aigateway.praxis.io
   resources:
@@ -31,14 +22,6 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - aigateway.praxis.io
-  resources:
-  - tenants
-  verbs:
-  - get
-  - list
-  - watch
 - apiGroups:
   - praxis.io
   resources:

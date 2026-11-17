@@ -14,9 +14,23 @@ spec:
     singular: aigateway
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.tenantRef.name
+      name: TenantRef
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
+        description: |-
+          AIGateway declares a gateway that exposes AI services for one Tenant.
+          A Tenant may have multiple AIGateways. Each gateway declares its runtime,
+          endpoint, inference and MCP capabilities, and governance.
         properties:
           apiVersion:
             description: |-
@@ -36,16 +50,218 @@ spec:
           metadata:
             type: object
           spec:
+            description: AIGatewaySpec defines the desired state of an AIGateway.
             properties:
-              replicas:
-                default: 1
-                format: int32
-                minimum: 0
-                type: integer
+              endpoint:
+                description: endpoint is required and configures the shared HTTP(S)
+                  listener.
+                properties:
+                  port:
+                    description: port is the listener port. Required; must be 1–65535.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  tls:
+                    description: tls is optional TLS configuration for the listener.
+                    properties:
+                      certificateRef:
+                        description: certificateRef names a Secret containing the
+                          TLS certificate in the gateway's namespace.
+                        properties:
+                          name:
+                            description: name is the name of the object.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - certificateRef
+                    type: object
+                required:
+                - port
+                type: object
+              governance:
+                description: governance configures gateway-level authorization and
+                  authentication.
+                properties:
+                  authentication:
+                    description: |-
+                      authentication is a list of authentication configurations.
+                      Each entry's type must match a Tenant authorizedIdentities entry.
+                    items:
+                      description: |-
+                        IdentityTypeSpec is authentication configuration for a single identity type.
+                        Discriminated by type.
+                      properties:
+                        audiences:
+                          description: |-
+                            audiences is a list of OIDC audiences, used when type is OIDC.
+                            When unset, the runtime applies the gateway name.
+                          items:
+                            type: string
+                          maxItems: 16
+                          type: array
+                        header:
+                          description: |-
+                            header is the HTTP header name carrying the API key, used when type is APIKey.
+                            v1alpha1 does not validate this field against the type.
+                          type: string
+                        issuerURL:
+                          description: |-
+                            issuerURL is the OIDC issuer URL, used when type is OIDC.
+                            v1alpha1 does not validate this field against the type.
+                          type: string
+                        keySource:
+                          description: keySource is the source of API keys, used when
+                            type is APIKey.
+                          properties:
+                            secretRef:
+                              description: secretRef selects the Secret entry holding
+                                the API keys.
+                              properties:
+                                key:
+                                  description: key is the entry within the Secret
+                                    holding the value.
+                                  maxLength: 253
+                                  minLength: 1
+                                  pattern: ^[-._a-zA-Z0-9]+$
+                                  type: string
+                                name:
+                                  description: name is the name of the object.
+                                  maxLength: 253
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                          required:
+                          - secretRef
+                          type: object
+                        maxStalenessSeconds:
+                          default: 30
+                          description: |-
+                            maxStalenessSeconds is the maximum staleness before a cached key is considered
+                            invalid, used when type is APIKey.
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        refreshSeconds:
+                          default: 5
+                          description: refreshSeconds is the cache refresh interval
+                            for API keys, used when type is APIKey.
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        type:
+                          description: type is the authentication type. Required;
+                            must match a Tenant authorizedIdentities entry.
+                          enum:
+                          - OIDC
+                          - APIKey
+                          type: string
+                      required:
+                      - type
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - type
+                    x-kubernetes-list-type: map
+                type: object
+              inference:
+                description: |-
+                  inference is optional and selects inference APIs to serve.
+                  If omitted, inference is disabled.
+                properties:
+                  chatCompletions:
+                    description: chatCompletions selects the OpenAI Chat Completions
+                      API.
+                    type: object
+                  responses:
+                    description: responses selects the OpenAI Responses API.
+                    properties:
+                      conversationState:
+                        description: |-
+                          conversationState configures where responses and conversation items are
+                          persisted, so a later turn can restore context. Omit it to select the
+                          API without persistence.
+                        properties:
+                          secretRef:
+                            description: |-
+                              secretRef names a Secret in the gateway's namespace holding the
+                              connection details for the store.
+                            properties:
+                              name:
+                                description: name is the name of the object.
+                                maxLength: 253
+                                minLength: 1
+                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                                type: string
+                            required:
+                            - name
+                            type: object
+                        required:
+                        - secretRef
+                        type: object
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: at least one API (chatCompletions or responses) must be
+                    selected
+                  rule: has(self.chatCompletions) || has(self.responses)
+              mcp:
+                description: mcp is optional and enables the MCP capability.
+                type: object
+              runtime:
+                description: runtime is optional and configures the gateway runtime
+                  (replicas, etc.).
+                properties:
+                  replicas:
+                    default: 1
+                    description: replicas is the desired number of gateway replicas.
+                      Defaults to 1.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                type: object
+              tenantRef:
+                description: |-
+                  tenantRef is a required, immutable reference to the owning Tenant.
+                  Must resolve in the AIGateway's namespace.
+                properties:
+                  name:
+                    description: name is the name of the object.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                    type: string
+                required:
+                - name
+                type: object
+                x-kubernetes-validations:
+                - message: tenantRef is immutable
+                  rule: self == oldSelf
+            required:
+            - endpoint
+            - tenantRef
             type: object
+            x-kubernetes-validations:
+            - message: at least one of inference or mcp must be configured
+              rule: has(self.inference) || has(self.mcp)
           status:
+            description: AIGatewayStatus reports the observed state of an AIGateway.
             properties:
               conditions:
+                description: |-
+                  conditions describe the gateway state.
+                  The Ready condition reports that the spec is valid and the referenced
+                  Tenant is ready.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -101,7 +317,12 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true

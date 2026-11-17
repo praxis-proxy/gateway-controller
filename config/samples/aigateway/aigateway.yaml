@@ -1,0 +1,21 @@
+apiVersion: aigateway.praxis.io/v1alpha1
+kind: AIGateway
+metadata:
+  name: team-alpha-gw
+  namespace: team-alpha
+spec:
+  tenantRef:
+    name: team-alpha
+  runtime:
+    replicas: 2
+  endpoint:
+    port: 8443
+  inference:
+    chatCompletions: {}
+  mcp: {}
+  governance:
+    authentication:
+      - type: OIDC
+        issuerURL: https://sso.example.com
+        audiences:
+          - team-alpha
