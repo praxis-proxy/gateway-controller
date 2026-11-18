@@ -104,13 +104,14 @@ ifeq ($(GINKGO_PARALLEL),true)
 	GINKGO_FLAGS += -p --procs=$(GINKGO_PROCS)
 endif
 
+.PHONY: test
+test: verify lint lint-extra test-unit test-integration kind-up test-e2e ## Run comprehensive test suite (all checks).
+	@echo "✅ All checks passed!"
+
 # Unit tests are hermetic: no cluster, no envtest binaries, no network.
 .PHONY: test-unit
 test-unit: ## Run unit tests.
 	go test -race -v $(GO_TEST_FLAGS) ./api/... ./cmd/... ./internal/...
-
-.PHONY: test
-test: test-unit ## Convenience alias for test-unit.
 
 .PHONY: test-integration
 test-integration: manifests generate setup-envtest ginkgo ## Run integration tests against envtest.

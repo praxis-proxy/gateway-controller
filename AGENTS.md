@@ -23,9 +23,12 @@ plane for AI Gateway data plane implementations.
 
 ```console
 make build              # build the manager binary
-make test               # unit tests (hermetic)
+make test               # comprehensive test suite (verify, lint, test-unit, test-integration, kind-up, test-e2e)
+make test-unit          # unit tests (hermetic, no cluster)
 make test-integration   # integration tests with envtest
+make test-e2e           # e2e tests (requires kind cluster)
 make lint               # run golangci-lint
+make lint-extra         # lint workflows and scripts
 make fmt                # run go fmt
 make vet                # run go vet
 make manifests          # generate CRD and RBAC manifests
@@ -33,8 +36,6 @@ make generate           # generate deepcopy implementations
 make verify             # verify generated code is committed
 make kind-up            # create kind cluster and deploy
 make kind-down          # delete kind cluster
-make test-e2e           # run e2e tests (requires kind cluster)
-make lint-extra         # lint workflows and scripts
 ```
 
 ## Code Quality Standards

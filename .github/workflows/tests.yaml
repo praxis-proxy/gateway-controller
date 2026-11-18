@@ -115,7 +115,7 @@ jobs:
         run: make build
 
       - name: Unit tests
-        run: make test
+        run: make test-unit
 
   # ----------------------------------------------------------------------------
   # Integration tests (envtest control plane)

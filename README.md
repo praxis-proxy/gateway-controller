@@ -8,10 +8,11 @@ Run `make help` for the full target list. The common ones:
 
 ```console
 make build             # build the manager binary
-make test              # unit tests (hermetic)
+make test              # comprehensive test suite (verify, lint, test-unit, test-integration, kind-up, test-e2e)
+make test-unit         # unit tests (hermetic, no cluster)
 make test-integration  # integration tests against envtest
+make test-e2e          # e2e tests (requires kind cluster)
 make kind-up           # create a kind cluster and deploy the manager into it
-make test-e2e          # e2e tests against that cluster (skipped without one)
 make kind-down         # delete the cluster
 make lint              # golangci-lint
 make verify            # fail if generated or derived output is uncommitted

@@ -9,8 +9,8 @@ do not follow the conventions will be rejected.
 ## Getting Started
 
 1. Fork the repository and clone your fork
-2. Build and test: `make build && make test`
-3. Run linting locally before pushing: `make lint`
+2. Build and test: `make build && make test-unit`
+3. Run comprehensive checks locally before pushing: `make test`
 
 Requirements are listed in the [README.md].
 
@@ -50,7 +50,7 @@ See the [development conventions] for details and override labels.
 
 All pull requests must:
 
-- Pass `make lint` and `make test` locally
+- Pass `make test` locally (comprehensive checks: verify, lint, test-unit, test-integration, kind-up, test-e2e)
 - Have meaningful commit messages following conventional format
 - Include tests for new functionality
 - Update documentation if applicable

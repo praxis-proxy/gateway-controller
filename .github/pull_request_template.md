@@ -13,6 +13,6 @@
 ## Checklist
 
 - [ ] I have read every line of this diff and can explain it
-- [ ] `make test` and `make lint` pass locally
+- [ ] `make test` passes locally (includes verify, lint, test-unit, test-integration, kind-up, test-e2e)
 - [ ] New capabilities have unit and integration tests
 - [ ] Commits are signed and signed-off (`git commit -s`)
