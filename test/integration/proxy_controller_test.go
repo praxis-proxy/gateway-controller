@@ -6,8 +6,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -91,7 +94,7 @@ var _ = Describe("Proxy Controller", func() {
 				{Name: "dup", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
 			},
 		}}
-		proxy.Spec.Listeners[0].FilterChains = nil
+		proxy.Spec.Listeners[0].FilterChains = []string{"chain"}
 		createProxy(ctx, proxy)
 
 		expectValidationError(ctx, proxy, "duplicate entry name")
@@ -106,7 +109,7 @@ var _ = Describe("Proxy Controller", func() {
 				{Name: "after", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
 			},
 		}}
-		proxy.Spec.Listeners[0].FilterChains = nil
+		proxy.Spec.Listeners[0].FilterChains = []string{"chain"}
 		createProxy(ctx, proxy)
 
 		expectValidationError(ctx, proxy, "terminal filter")
@@ -164,7 +167,7 @@ var _ = Describe("Proxy Controller", func() {
 				{Name: "after", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
 			},
 		}}
-		proxy.Spec.Listeners[0].FilterChains = nil
+		proxy.Spec.Listeners[0].FilterChains = []string{"chain"}
 		createProxy(ctx, proxy)
 
 		Eventually(func(gom Gomega, ctx context.Context) {
@@ -212,6 +215,244 @@ var _ = Describe("Proxy Controller", func() {
 			gom.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			gom.Expect(cond.Reason).To(Equal("ValidationError"))
 			gom.Expect(proxy.Status.ObservedGeneration).To(Equal(proxy.Generation))
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+	})
+
+	It("should create a ConfigMap with rendered config for a valid proxy", func(ctx context.Context) {
+		proxy := validProxy("cm-create")
+		createProxy(ctx, proxy)
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			cm := &corev1.ConfigMap{}
+			gom.Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      proxy.Name + "-config",
+				Namespace: proxy.Namespace,
+			}, cm)).To(Succeed())
+			gom.Expect(cm.Data).To(HaveKey("config.yaml"))
+			gom.Expect(cm.Data["config.yaml"]).To(ContainSubstring("listeners"))
+			gom.Expect(cm.OwnerReferences).To(HaveLen(1))
+			gom.Expect(cm.OwnerReferences[0].Name).To(Equal(proxy.Name))
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+	})
+
+	It("should set Programmed condition and revision for a valid proxy", func(ctx context.Context) {
+		proxy := validProxy("programmed")
+		createProxy(ctx, proxy)
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			got := &proxyv1alpha1.Proxy{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), got)).To(Succeed())
+			cond := meta.FindStatusCondition(got.Status.Conditions, proxyv1alpha1.ConditionTypeProgrammed)
+			gom.Expect(cond).NotTo(BeNil())
+			gom.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			gom.Expect(cond.Reason).To(Equal("ConfigPublished"))
+			gom.Expect(got.Status.DesiredRevision).NotTo(BeEmpty())
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+	})
+
+	It("should set ResolvedRefs and populate listener status", func(ctx context.Context) {
+		proxy := validProxy("resolved")
+		createProxy(ctx, proxy)
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			got := &proxyv1alpha1.Proxy{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), got)).To(Succeed())
+			cond := meta.FindStatusCondition(got.Status.Conditions, proxyv1alpha1.ConditionTypeResolvedRefs)
+			gom.Expect(cond).NotTo(BeNil())
+			gom.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			gom.Expect(got.Status.Listeners).To(HaveLen(1))
+			gom.Expect(got.Status.Listeners[0].Name).To(Equal("http"))
+			gom.Expect(got.Status.Listeners[0].ChainOrder).To(Equal([]string{"main"}))
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+	})
+
+	It("should not create ConfigMap for invalid proxy", func(ctx context.Context) {
+		proxy := validProxy("cm-no-create")
+		proxy.Spec.FilterChains = []proxyv1alpha1.ProxyFilterChain{{
+			Name: "chain",
+			Filters: []proxyv1alpha1.PraxisFilterEntry{
+				{Name: "dup", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
+				{Name: "dup", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
+			},
+		}}
+		proxy.Spec.Listeners[0].FilterChains = []string{"chain"}
+		createProxy(ctx, proxy)
+
+		expectValidationError(ctx, proxy, "duplicate entry name")
+
+		cm := &corev1.ConfigMap{}
+		err := k8sClient.Get(ctx, types.NamespacedName{
+			Name:      proxy.Name + "-config",
+			Namespace: proxy.Namespace,
+		}, cm)
+		Expect(err).To(HaveOccurred())
+	})
+
+	It("should create a Deployment with correct container spec", func(ctx context.Context) {
+		proxy := validProxy("deploy")
+		createProxy(ctx, proxy)
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			deploy := &appsv1.Deployment{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), deploy)).To(Succeed())
+			gom.Expect(deploy.OwnerReferences).To(HaveLen(1))
+			gom.Expect(deploy.OwnerReferences[0].Name).To(Equal(proxy.Name))
+			gom.Expect(*deploy.Spec.Replicas).To(Equal(int32(1)))
+			containers := deploy.Spec.Template.Spec.Containers
+			gom.Expect(containers).To(HaveLen(1))
+			gom.Expect(containers[0].Image).To(Equal(proxy.Spec.Image))
+			gom.Expect(containers[0].Ports).To(HaveLen(1))
+			gom.Expect(containers[0].Ports[0].ContainerPort).To(Equal(int32(8080)))
+			gom.Expect(deploy.Spec.Template.Annotations).To(HaveKey("praxis.io/config-revision"))
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+	})
+
+	It("should create a Service exposing listener ports", func(ctx context.Context) {
+		proxy := validProxy("svc")
+		createProxy(ctx, proxy)
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			svc := &corev1.Service{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), svc)).To(Succeed())
+			gom.Expect(svc.OwnerReferences).To(HaveLen(1))
+			gom.Expect(svc.OwnerReferences[0].Name).To(Equal(proxy.Name))
+			gom.Expect(svc.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
+			gom.Expect(svc.Spec.Ports).To(HaveLen(1))
+			gom.Expect(svc.Spec.Ports[0].Port).To(Equal(int32(8080)))
+			gom.Expect(svc.Spec.Ports[0].Name).To(Equal("http"))
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+	})
+
+	It("should set Ready=False when deployment has no ready replicas", func(ctx context.Context) {
+		proxy := validProxy("ready-false")
+		createProxy(ctx, proxy)
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			got := &proxyv1alpha1.Proxy{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), got)).To(Succeed())
+			cond := meta.FindStatusCondition(got.Status.Conditions, proxyv1alpha1.ConditionTypeReady)
+			gom.Expect(cond).NotTo(BeNil())
+			gom.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			gom.Expect(cond.Reason).To(Equal("NoReadyReplicas"))
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+	})
+
+	It("should update ConfigMap and Deployment revision when filter changes", func(ctx context.Context) {
+		proxy := validProxy("update-filter")
+		createProxy(ctx, proxy)
+
+		var origRevision string
+		Eventually(func(gom Gomega, ctx context.Context) {
+			deploy := &appsv1.Deployment{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), deploy)).To(Succeed())
+			origRevision = deploy.Spec.Template.Annotations["praxis.io/config-revision"]
+			gom.Expect(origRevision).NotTo(BeEmpty())
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+
+		Eventually(func(ctx context.Context) error {
+			got := &proxyv1alpha1.Proxy{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), got); err != nil {
+				return err
+			}
+			got.Spec.FilterChains[0].Filters[0].InlineFilter.Type = "access_log"
+			return k8sClient.Update(ctx, got)
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			cm := &corev1.ConfigMap{}
+			gom.Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      proxy.Name + "-config",
+				Namespace: proxy.Namespace,
+			}, cm)).To(Succeed())
+			gom.Expect(cm.Data["config.yaml"]).To(ContainSubstring("access_log"))
+			deploy := &appsv1.Deployment{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), deploy)).To(Succeed())
+			newRevision := deploy.Spec.Template.Annotations["praxis.io/config-revision"]
+			gom.Expect(newRevision).NotTo(BeEmpty())
+			gom.Expect(newRevision).NotTo(Equal(origRevision))
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+	})
+
+	It("should update Service type when spec.service.type changes", func(ctx context.Context) {
+		proxy := validProxy("update-svc-type")
+		createProxy(ctx, proxy)
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			svc := &corev1.Service{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), svc)).To(Succeed())
+			gom.Expect(svc.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+
+		Eventually(func(ctx context.Context) error {
+			got := &proxyv1alpha1.Proxy{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), got); err != nil {
+				return err
+			}
+			nodePort := proxyv1alpha1.ServiceType(corev1.ServiceTypeNodePort)
+			got.Spec.Service = &proxyv1alpha1.ProxyService{Type: &nodePort}
+			return k8sClient.Update(ctx, got)
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			svc := &corev1.Service{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), svc)).To(Succeed())
+			gom.Expect(svc.Spec.Type).To(Equal(corev1.ServiceTypeNodePort))
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+	})
+
+	It("should update revision when spec.image changes", func(ctx context.Context) {
+		proxy := validProxy("rev-image")
+		createProxy(ctx, proxy)
+
+		var origRevision string
+		Eventually(func(gom Gomega, ctx context.Context) {
+			got := &proxyv1alpha1.Proxy{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), got)).To(Succeed())
+			gom.Expect(got.Status.DesiredRevision).NotTo(BeEmpty())
+			origRevision = got.Status.DesiredRevision
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+
+		Eventually(func(ctx context.Context) error {
+			got := &proxyv1alpha1.Proxy{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), got); err != nil {
+				return err
+			}
+			got.Spec.Image = "ghcr.io/praxis-proxy/praxis:v2"
+			return k8sClient.Update(ctx, got)
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			got := &proxyv1alpha1.Proxy{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), got)).To(Succeed())
+			gom.Expect(got.Status.DesiredRevision).NotTo(BeEmpty())
+			gom.Expect(got.Status.DesiredRevision).NotTo(Equal(origRevision))
+		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
+	})
+
+	It("should set Accepted=False and ResolvedRefs=False for unrenderable filter", func(ctx context.Context) {
+		proxy := validProxy("render-error")
+		proxy.Spec.FilterChains[0].Filters[0] = proxyv1alpha1.PraxisFilterEntry{
+			Name: "unknown",
+			Ref: &proxyv1alpha1.PraxisFilterReference{
+				Group: "other.io",
+				Kind:  "CustomFilter",
+				Name:  "my-filter",
+			},
+		}
+		createProxy(ctx, proxy)
+
+		Eventually(func(gom Gomega, ctx context.Context) {
+			got := &proxyv1alpha1.Proxy{}
+			gom.Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(proxy), got)).To(Succeed())
+			accepted := meta.FindStatusCondition(got.Status.Conditions, proxyv1alpha1.ConditionTypeAccepted)
+			gom.Expect(accepted).NotTo(BeNil())
+			gom.Expect(accepted.Status).To(Equal(metav1.ConditionFalse))
+			gom.Expect(accepted.Reason).To(Equal("ConfigRenderError"))
+			gom.Expect(accepted.Message).To(ContainSubstring("unsupported filter"))
+			resolved := meta.FindStatusCondition(got.Status.Conditions, proxyv1alpha1.ConditionTypeResolvedRefs)
+			gom.Expect(resolved).NotTo(BeNil())
+			gom.Expect(resolved.Status).To(Equal(metav1.ConditionFalse))
+			gom.Expect(resolved.Reason).To(Equal("ConfigRenderError"))
 		}).WithContext(ctx).WithTimeout(proxyReconcileTimeout).Should(Succeed())
 	})
 

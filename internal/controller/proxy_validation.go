@@ -8,7 +8,9 @@ import (
 	proxyv1alpha1 "github.com/praxis-proxy/gateway-controller/api/proxy/v1alpha1"
 )
 
-const maxConditionMessageLen = 32768
+const (
+	maxConditionMessageLen = 32768
+)
 
 var terminalFilterTypes = map[string]bool{
 	"iterative_request_router": true,
@@ -35,6 +37,9 @@ func validateProxySpec(spec *proxyv1alpha1.ProxySpec) []string {
 	}
 
 	for listenerIdx, listener := range spec.Listeners {
+		if len(listener.FilterChains) == 0 {
+			errs = append(errs, fmt.Sprintf("spec.listeners[%d]: listener %q must reference at least one filter chain", listenerIdx, listener.Name))
+		}
 		for refIdx, ref := range listener.FilterChains {
 			chain, ok := chainsByName[ref]
 			if !ok {

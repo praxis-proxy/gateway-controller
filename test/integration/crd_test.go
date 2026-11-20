@@ -146,7 +146,29 @@ var _ = Describe("Proxy CRD", func() {
 					},
 				}}
 			}),
+		Entry("a listener name exceeding 15 characters", "long-listener-name",
+			func(spec *proxyv1alpha1.ProxySpec) {
+				spec.Listeners[0].Name = "this-name-is-too-long"
+			}),
+		Entry("a listener name with invalid characters", "bad-listener-chars",
+			func(spec *proxyv1alpha1.ProxySpec) {
+				spec.Listeners[0].Name = "UPPER"
+			}),
 	)
+
+	It("rejects a Proxy with a name exceeding 63 characters", func(ctx context.Context) {
+		proxy := &proxyv1alpha1.Proxy{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "a234567890b234567890c234567890d234567890e234567890f234567890g2345",
+				Namespace: "default",
+			},
+			Spec: validProxySpec(),
+		}
+		err := k8sClient.Create(ctx, proxy)
+		Expect(err).To(HaveOccurred(), "the apiserver should reject a Proxy with a name > 63 chars")
+		Expect(apierrors.IsInvalid(err)).To(BeTrue(),
+			"expected a validation error, got: %v", err)
+	})
 
 	// Verify that valid port boundaries are accepted
 	DescribeTable("accepts a valid Proxy with boundary port values",

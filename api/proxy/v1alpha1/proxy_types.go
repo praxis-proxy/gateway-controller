@@ -121,6 +121,8 @@ type PraxisListener struct {
 	// name is the unique listener and generated Service port name.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=15
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
 	Name string `json:"name"`
 
 	// port is the container and Service port.
@@ -226,6 +228,7 @@ type PraxisListenerStatus struct {
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63",message="proxy name must not exceed 63 characters"
 
 // Proxy owns the Praxis Deployment, Service, config, assets, and listeners.
 type Proxy struct {
