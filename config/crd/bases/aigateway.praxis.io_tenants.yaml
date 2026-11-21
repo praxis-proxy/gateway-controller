@@ -70,9 +70,10 @@ spec:
                       description: secretRef names a Secret in the Tenant's namespace.
                       properties:
                         name:
-                          description: name is the name of the Secret.
+                          description: name is the name of the object.
                           maxLength: 253
                           minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                           type: string
                       required:
                       - name

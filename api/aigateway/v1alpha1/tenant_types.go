@@ -29,7 +29,7 @@ type AuthorizedIdentity struct {
 type AuthorizedCredential struct {
 	// secretRef names a Secret in the Tenant's namespace.
 	// +required
-	SecretRef LocalSecretReference `json:"secretRef"`
+	SecretRef LocalObjectReference `json:"secretRef"`
 }
 
 // TenantSpec defines the authorization grants for a tenant. Both lists are

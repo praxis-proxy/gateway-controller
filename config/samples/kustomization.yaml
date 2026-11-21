@@ -2,3 +2,4 @@ resources:
   - proxy/proxy.yaml
   - proxy/policy.yaml
   - aigateway/tenant.yaml
+  - aigateway/aigateway.yaml

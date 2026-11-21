@@ -74,7 +74,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 	patch := client.MergeFrom(tenant.DeepCopy())
 
-	log.V(1).Info("reconciling tenant")
+	log.V(1).Info("reconciling tenant", "name", req.Name, "namespace", req.Namespace)
 
 	var tenants aigatewayv1alpha1.TenantList
 	if err := r.List(ctx, &tenants, client.InNamespace(req.Namespace)); err != nil {

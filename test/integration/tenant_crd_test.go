@@ -38,7 +38,7 @@ func validTenantSpec() aigatewayv1alpha1.TenantSpec {
 			{Type: aigatewayv1alpha1.IdentityTypeAPIKey},
 		},
 		AuthorizedCredentials: []aigatewayv1alpha1.AuthorizedCredential{
-			{SecretRef: aigatewayv1alpha1.LocalSecretReference{Name: "model-provider-key"}},
+			{SecretRef: aigatewayv1alpha1.LocalObjectReference{Name: "model-provider-key"}},
 		},
 	}
 }
@@ -116,14 +116,14 @@ var _ = Describe("Tenant CRD", func() {
 		Entry("duplicate credential secret names", "duplicate-credentials",
 			func(spec *aigatewayv1alpha1.TenantSpec) {
 				spec.AuthorizedCredentials = []aigatewayv1alpha1.AuthorizedCredential{
-					{SecretRef: aigatewayv1alpha1.LocalSecretReference{Name: "shared"}},
-					{SecretRef: aigatewayv1alpha1.LocalSecretReference{Name: "shared"}},
+					{SecretRef: aigatewayv1alpha1.LocalObjectReference{Name: "shared"}},
+					{SecretRef: aigatewayv1alpha1.LocalObjectReference{Name: "shared"}},
 				}
 			}),
 		Entry("an empty credential secret name", "empty-credential-name",
 			func(spec *aigatewayv1alpha1.TenantSpec) {
 				spec.AuthorizedCredentials = []aigatewayv1alpha1.AuthorizedCredential{
-					{SecretRef: aigatewayv1alpha1.LocalSecretReference{Name: ""}},
+					{SecretRef: aigatewayv1alpha1.LocalObjectReference{Name: ""}},
 				}
 			}),
 	)

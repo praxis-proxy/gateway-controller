@@ -14,6 +14,10 @@ const (
 	// ReasonConflict indicates another resource won a contended claim.
 	ReasonConflict = "Conflict"
 
+	// ReasonInvalid indicates the resource's configuration is rejected by a
+	// check the apiserver cannot make, such as a cross-resource constraint.
+	ReasonInvalid = "Invalid"
+
 	// ReasonDependencyNotReady indicates a resource this one depends on is
 	// absent or not ready.
 	ReasonDependencyNotReady = "DependencyNotReady"

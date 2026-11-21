@@ -55,6 +55,13 @@ func TestIntegration(t *testing.T) {
 		t.Fatalf("setup tenant reconciler: %v", err)
 	}
 
+	if err := (&controller.AIGatewayReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		t.Fatalf("setup aigateway reconciler: %v", err)
+	}
+
 	go func() {
 		if err := mgr.Start(ctx); err != nil && ctx.Err() == nil {
 			t.Errorf("start manager: %v", err)
