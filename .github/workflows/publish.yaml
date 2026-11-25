@@ -4,17 +4,21 @@ name: Build and Publish
 # Workflow Settings
 # ------------------------------------------------------------------------------
 #
-# Builds and publishes container images to GHCR on pushes to main and on
-# manual workflow dispatch. Image tags include the commit SHA for traceability.
+# Builds and publishes container images to GHCR on pushes to the long-lived
+# branches and on manual workflow dispatch. Image tags include the commit SHA
+# for traceability. The branch tag distinguishes the two lines: `main` carries
+# the core praxis.io APIs, `aigateway` adds the aigateway.praxis.io layer.
+# `latest` tracks the default branch only.
 
 on:
   push:
-    branches: [main]
+    branches: [main, aigateway]
   workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: >-
+    ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/aigateway' }}
 
 permissions: {}
 

@@ -6,14 +6,15 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, aigateway]
   pull_request:
-    branches: [main]
+    branches: [main, aigateway]
   workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: >-
+    ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/aigateway' }}
 
 permissions: {}
 
