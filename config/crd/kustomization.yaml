@@ -1,5 +1,3 @@
 resources:
   - bases/praxis.io_proxies.yaml
   - bases/praxis.io_policies.yaml
-  - bases/aigateway.praxis.io_aigateways.yaml
-  - bases/aigateway.praxis.io_tenants.yaml

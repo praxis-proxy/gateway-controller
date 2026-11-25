@@ -14,7 +14,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
-	aigatewayv1alpha1 "github.com/praxis-proxy/gateway-controller/api/aigateway/v1alpha1"
 	proxyv1alpha1 "github.com/praxis-proxy/gateway-controller/api/proxy/v1alpha1"
 )
 
@@ -57,7 +56,7 @@ func CRDDirectoryPaths(tb testing.TB) []string {
 	return []string{filepath.Join(repoRoot, "config", "crd", "bases")}
 }
 
-// NewScheme returns a scheme with the Kubernetes built-ins and both project
+// NewScheme returns a scheme with the Kubernetes built-ins and the project
 // API groups registered.
 func NewScheme(tb testing.TB) *k8sruntime.Scheme {
 	tb.Helper()
@@ -66,7 +65,6 @@ func NewScheme(tb testing.TB) *k8sruntime.Scheme {
 	for _, add := range []func(*k8sruntime.Scheme) error{
 		clientgoscheme.AddToScheme,
 		proxyv1alpha1.AddToScheme,
-		aigatewayv1alpha1.AddToScheme,
 	} {
 		if err := add(scheme); err != nil {
 			tb.Fatalf("build scheme: %v", err)
