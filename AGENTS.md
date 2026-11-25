@@ -63,6 +63,64 @@ make verify     # fail if changes not committed
 
 All generated code must be committed.
 
+## Branches
+
+`main` carries the core `praxis.io` APIs (Proxy, Policy). The
+`aigateway` branch adds the `aigateway.praxis.io` layer on top of it.
+Work on the AI Gateway APIs targets `aigateway`; everything else, including
+shared tooling, CI and documentation, targets `main` and reaches `aigateway`
+by merge. Both branches run the full CI suite.
+
+## Testing
+
+See [test structure guide](test/README.md) for the complete testing strategy:
+
+- **Integration tests** (`make test-integration`): resource validation and
+  controller logic using envtest
+  - CRD schema and CEL validation
+  - Controller reconciliation in isolation
+  - Fast, run on every commit
+- **E2E tests** (`make test-e2e`): real user scenarios on a real Kubernetes
+  cluster
+  - Multi-resource workflows and user journeys
+  - Operational validation (RBAC, cleanup, finalizers)
+  - Functional assertions, not just resource readiness
+  - Slower, runs before release
+
+New tests should be added to the appropriate suite based on scope. See
+[test/README.md](test/README.md) for details.
+
+## API Types
+
+- Comments on exported fields become the CRD `description` and appear in
+  `kubectl explain`. Describe what the field is, not why it changed
+
+## Controller Implementation Patterns
+
+When modifying controllers or adding new ones:
+
+**Status updates:**
+- Use `Patch` with `client.MergeFrom(resource.DeepCopy())` instead of `Update`
+- Safer for concurrent updates; multiple controllers can update different status fields
+- Example: `r.Status().Patch(ctx, obj, patch)`
+
+**Validation:**
+- Keep controller validation minimal: only runtime dependencies and business logic
+- Schema constraints (Minimum, Maximum, Enum, required fields) are enforced by the apiserver
+- CEL validation rules (x-kubernetes-validations) are enforced at admission time
+- Don't duplicate apiserver validation in the controller
+
+**Logging:**
+- Use `log.V(1).Info("reconciling {resource}", "name", req.Name, "namespace", req.Namespace)` at the start (debug level)
+- Use `log.Error(err, "...")` only for actual failures
+- Include resource identifiers (name, namespace) in log messages
+
+**Status conditions:**
+- Use the `setCondition` helper from `helpers.go` for consistent condition updates
+- Use the condition type and reason constants the resource's API package declares
+- Always include a human-readable message
+- Set `observedGeneration` to `resource.Generation`
+
 ## Project Conventions
 
 See [development conventions] for the full guide:
