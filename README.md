@@ -20,4 +20,33 @@ make verify            # fail if generated or derived output is uncommitted
 
 Development follows the praxis-proxy [development conventions].
 
+## Two-Branch Development Model
+
+This repository maintains two long-lived branches reflecting two API layers:
+
+- **`main`**: The core Praxis APIs (`praxis.io`). Proxy and Policy resources
+  for configuring the data plane gateway runtime.
+- **`aigateway`**: The full AI Gateway stack, adding the `aigateway.praxis.io`
+  layer (Tenant, AIGateway, ModelProvider, Model, MCP, Agent) on top of core.
+
+Both branches run the full CI suite.
+
+### Why Two Branches?
+
+The core APIs present a smaller integration surface and will stabilise sooner.
+The AI Gateway layer is a larger, still-evolving design. Keeping them on
+separate branches lets consumers integrate the core layer independently,
+without taking a dependency on the full stack before it is ready.
+
+### Development Workflow
+
+- **Core APIs and fixes** target `main`
+- **AI Gateway features** target `aigateway`
+- The `aigateway` branch regularly rebases onto `main` to stay current with core
+  improvements
+- Never merge `aigateway` back to `main`; the history flows one direction only
+
+Shared changes (CI, documentation, shared utilities) land on `main` first, then
+flow to `aigateway` via rebase.
+
 [development conventions]: https://github.com/praxis-proxy/conventions/blob/main/docs/conventions.md

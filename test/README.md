@@ -23,8 +23,8 @@ otherwise tell whether the controller did its job.
 
 ## Integration Tests (`./integration`)
 
-**Purpose:** Validate individual API resources (CRDs) and their controllers in
-isolation using `envtest`.
+**Purpose:** Validate API resources (CRDs) and their controllers using `envtest`,
+without a real Kubernetes cluster.
 
 **Scope:**
 
@@ -34,8 +34,9 @@ isolation using `envtest`.
   is pruned silently, so only a read-back proves it persists
 - Controller reconciliation logic: state management, dependency resolution,
   condition updates
-- Fast and isolated. `make test-integration` runs this suite; `make test` runs
-  everything, including e2e
+- Fast and local. `make test-integration` runs this suite; `make test` runs
+  everything, including e2e. All controllers in the repository run together in
+  one envtest environment
 
 **Test organization:**
 

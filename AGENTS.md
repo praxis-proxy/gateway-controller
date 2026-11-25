@@ -63,14 +63,6 @@ make verify     # fail if changes not committed
 
 All generated code must be committed.
 
-## Branches
-
-`main` carries the core `praxis.io` APIs (Proxy, Policy). The
-`aigateway` branch adds the `aigateway.praxis.io` layer on top of it.
-Work on the AI Gateway APIs targets `aigateway`; everything else, including
-shared tooling, CI and documentation, targets `main` and reaches `aigateway`
-by merge. Both branches run the full CI suite.
-
 ## Testing
 
 See [test structure guide](test/README.md) for the complete testing strategy:
@@ -78,14 +70,12 @@ See [test structure guide](test/README.md) for the complete testing strategy:
 - **Integration tests** (`make test-integration`): resource validation and
   controller logic using envtest
   - CRD schema and CEL validation
-  - Controller reconciliation in isolation
-  - Fast, run on every commit
+  - Controller reconciliation without a real cluster
 - **E2E tests** (`make test-e2e`): real user scenarios on a real Kubernetes
   cluster
   - Multi-resource workflows and user journeys
   - Operational validation (RBAC, cleanup, finalizers)
   - Functional assertions, not just resource readiness
-  - Slower, runs before release
 
 New tests should be added to the appropriate suite based on scope. See
 [test/README.md](test/README.md) for details.
