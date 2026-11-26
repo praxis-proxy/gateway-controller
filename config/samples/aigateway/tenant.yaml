@@ -1,0 +1,12 @@
+apiVersion: aigateway.praxis.io/v1alpha1
+kind: Tenant
+metadata:
+  name: team-alpha
+  namespace: team-alpha
+spec:
+  authorizedIdentities:
+    - type: OIDC
+    - type: APIKey
+  authorizedCredentials:
+    - secretRef:
+        name: model-provider-key
