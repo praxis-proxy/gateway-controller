@@ -1,0 +1,90 @@
+name: Sync main into aigateway
+
+# ------------------------------------------------------------------------------
+# Workflow Settings
+# ------------------------------------------------------------------------------
+#
+# Merges main into aigateway on every push to main, nightly at 23:00 UTC, and
+# on demand. Uses peter-evans/create-pull-request to create or update a single
+# fixed-branch PR (chore/sync-main-to-aigateway); a force push to that branch
+# updates the open PR rather than opening a new one. The PR is opened with the
+# praxis-bot identity so that CI runs on it automatically.
+#
+# Merge conflicts are not auto-resolved. The workflow fails with a warning so a
+# maintainer can merge manually.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 23 * * *'  # Every day at 23:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: sync-main-to-aigateway
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Generate bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.PRAXIS_BOT_APP_ID }}
+          private-key: ${{ secrets.PRAXIS_BOT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: aigateway
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: true
+
+      - name: Merge main into aigateway
+        id: merge
+        run: |
+          git config user.email "praxis-bot[bot]@users.noreply.github.com"
+          git config user.name "praxis-bot[bot]"
+          git fetch origin main
+          if git merge origin/main --no-edit \
+              -m "chore: sync main into aigateway"; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            git merge --abort
+          fi
+
+      - name: Create or update sync PR
+        if: steps.merge.outputs.merged == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          base: aigateway
+          branch: chore/sync-main-to-aigateway
+          delete-branch: true
+          title: "chore: sync main into aigateway"
+          body: |
+            Automated sync of `main` into `aigateway`.
+
+            **Triggered by:** ${{ github.event_name }} (${{ github.sha }})
+
+            Review the diff, then merge to keep the branches in sync. This PR
+            is updated automatically on every push to `main`.
+          labels: chore
+          signoff: true
+          sign-commits: true
+
+      - name: Warn on merge conflict
+        if: steps.merge.outputs.merged == 'false'
+        run: |
+          echo "::warning::Merge conflict between main and aigateway."\
+               "Resolve manually: git checkout aigateway && git merge main"
+          exit 1
