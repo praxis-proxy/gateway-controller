@@ -46,10 +46,22 @@ func TestValidateProxySpec(t *testing.T) {
 						{Name: "dup", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
 					},
 				}},
-				Listeners: []proxyv1alpha1.PraxisListener{{Name: "http", Port: 8080}},
+				Listeners: []proxyv1alpha1.PraxisListener{{Name: "http", Port: 8080, FilterChains: []string{"chain"}}},
 			},
 			wantErrs: 1,
 			wantMsg:  "duplicate entry name",
+		},
+		{
+			name: "listener with no filter chains",
+			spec: proxyv1alpha1.ProxySpec{
+				Image: "ghcr.io/praxis-proxy/praxis:latest",
+				Listeners: []proxyv1alpha1.PraxisListener{{
+					Name: "http",
+					Port: 8080,
+				}},
+			},
+			wantErrs: 1,
+			wantMsg:  "must reference at least one filter chain",
 		},
 		{
 			name: "non-terminal filter type not last is valid",
@@ -62,7 +74,7 @@ func TestValidateProxySpec(t *testing.T) {
 						{Name: "after", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
 					},
 				}},
-				Listeners: []proxyv1alpha1.PraxisListener{{Name: "http", Port: 8080}},
+				Listeners: []proxyv1alpha1.PraxisListener{{Name: "http", Port: 8080, FilterChains: []string{"chain"}}},
 			},
 			wantErrs: 0,
 		},
@@ -77,7 +89,7 @@ func TestValidateProxySpec(t *testing.T) {
 						{Name: "after", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
 					},
 				}},
-				Listeners: []proxyv1alpha1.PraxisListener{{Name: "http", Port: 8080}},
+				Listeners: []proxyv1alpha1.PraxisListener{{Name: "http", Port: 8080, FilterChains: []string{"chain"}}},
 			},
 			wantErrs: 1,
 			wantMsg:  "terminal filter \"iterative_request_router\"",
@@ -93,7 +105,7 @@ func TestValidateProxySpec(t *testing.T) {
 						{Name: "term", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "iterative_request_router"}},
 					},
 				}},
-				Listeners: []proxyv1alpha1.PraxisListener{{Name: "http", Port: 8080}},
+				Listeners: []proxyv1alpha1.PraxisListener{{Name: "http", Port: 8080, FilterChains: []string{"chain"}}},
 			},
 			wantErrs: 0,
 		},
@@ -173,6 +185,63 @@ func TestValidateProxySpec(t *testing.T) {
 					Port:         8080,
 					FilterChains: []string{"missing"},
 				}},
+			},
+			wantErrs: 2,
+		},
+		{
+			name: "listener pipeline repeats an entry name across chains",
+			spec: proxyv1alpha1.ProxySpec{
+				Image: "ghcr.io/praxis-proxy/praxis:latest",
+				FilterChains: []proxyv1alpha1.ProxyFilterChain{
+					{Name: "chain-a", Filters: []proxyv1alpha1.PraxisFilterEntry{
+						{Name: "shared", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
+					}},
+					{Name: "chain-b", Filters: []proxyv1alpha1.PraxisFilterEntry{
+						{Name: "shared", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "access_log"}},
+					}},
+				},
+				Listeners: []proxyv1alpha1.PraxisListener{{
+					Name:         "http",
+					Port:         8080,
+					FilterChains: []string{"chain-a", "chain-b"},
+				}},
+			},
+			wantErrs: 1,
+			wantMsg:  `duplicate entry name "shared" in listener "http" pipeline`,
+		},
+		{
+			name: "chains may reuse entry names when no listener references both",
+			spec: proxyv1alpha1.ProxySpec{
+				Image: "ghcr.io/praxis-proxy/praxis:latest",
+				FilterChains: []proxyv1alpha1.ProxyFilterChain{
+					{Name: "chain-a", Filters: []proxyv1alpha1.PraxisFilterEntry{
+						{Name: "shared", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
+					}},
+					{Name: "chain-b", Filters: []proxyv1alpha1.PraxisFilterEntry{
+						{Name: "shared", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "access_log"}},
+					}},
+				},
+				Listeners: []proxyv1alpha1.PraxisListener{
+					{Name: "http", Port: 8080, FilterChains: []string{"chain-a"}},
+					{Name: "admin", Port: 9090, FilterChains: []string{"chain-b"}},
+				},
+			},
+			wantErrs: 0,
+		},
+		{
+			name: "listener with empty filter chains and undefined chain ref",
+			spec: proxyv1alpha1.ProxySpec{
+				Image: "ghcr.io/praxis-proxy/praxis:latest",
+				FilterChains: []proxyv1alpha1.ProxyFilterChain{{
+					Name: "chain",
+					Filters: []proxyv1alpha1.PraxisFilterEntry{
+						{Name: "f", InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"}},
+					},
+				}},
+				Listeners: []proxyv1alpha1.PraxisListener{
+					{Name: "no-chains", Port: 8080},
+					{Name: "bad-ref", Port: 9090, FilterChains: []string{"ghost"}},
+				},
 			},
 			wantErrs: 2,
 		},
@@ -293,4 +362,104 @@ func TestJoinValidationErrors(t *testing.T) {
 			t.Fatalf("expected suffix %q, got tail: %q", wantSuffix, got[start:])
 		}
 	})
+}
+
+// TestValidateProxySpec_AdminBind verifies the admin interface stays
+// loopback-only unless the spec explicitly opts in: the Praxis runtime
+// rejects non-loopback admin binds at startup without its
+// allow_public_admin option, so the controller must refuse to publish
+// them before the runtime crash-loops.
+func TestValidateProxySpec_AdminBind(t *testing.T) {
+	t.Parallel()
+
+	adminSpec := func(admin *proxyv1alpha1.PraxisAdmin, options *proxyv1alpha1.PraxisInsecureOptions) proxyv1alpha1.ProxySpec {
+		return proxyv1alpha1.ProxySpec{
+			Image:           "ghcr.io/praxis-proxy/praxis:latest",
+			Admin:           admin,
+			InsecureOptions: options,
+			FilterChains: []proxyv1alpha1.ProxyFilterChain{{
+				Name: "main",
+				Filters: []proxyv1alpha1.PraxisFilterEntry{{
+					Name:         "rl",
+					InlineFilter: &proxyv1alpha1.PraxisInlineFilter{Type: "rate_limit"},
+				}},
+			}},
+			Listeners: []proxyv1alpha1.PraxisListener{{Name: "http", Port: 8080, FilterChains: []string{"main"}}},
+		}
+	}
+	admin := func(address string) *proxyv1alpha1.PraxisAdmin {
+		return &proxyv1alpha1.PraxisAdmin{Address: address}
+	}
+	optIn := func(value bool) *proxyv1alpha1.PraxisInsecureOptions {
+		return &proxyv1alpha1.PraxisInsecureOptions{AllowPublicAdmin: &value}
+	}
+
+	tests := []struct {
+		name     string
+		spec     proxyv1alpha1.ProxySpec
+		wantErrs int
+		wantMsg  string
+	}{
+		{name: "no admin interface", spec: adminSpec(nil, nil), wantErrs: 0},
+		{name: "IPv4 loopback admin bind", spec: adminSpec(admin("127.0.0.1:19901"), nil), wantErrs: 0},
+		{name: "any 127/8 address is loopback", spec: adminSpec(admin("127.8.9.9:19901"), nil), wantErrs: 0},
+		{name: "IPv6 loopback admin bind", spec: adminSpec(admin("[::1]:19901"), nil), wantErrs: 0},
+		{name: "IPv4-mapped loopback admin bind", spec: adminSpec(admin("[::ffff:127.0.0.1]:19901"), nil), wantErrs: 0},
+		{
+			name:     "IPv4 wildcard admin bind requires the opt-in",
+			spec:     adminSpec(admin("0.0.0.0:19901"), nil),
+			wantErrs: 1,
+			wantMsg:  "allowPublicAdmin",
+		},
+		{
+			name:     "IPv6 wildcard admin bind requires the opt-in",
+			spec:     adminSpec(admin("[::]:19901"), nil),
+			wantErrs: 1,
+			wantMsg:  "allowPublicAdmin",
+		},
+		{
+			name:     "pod IP admin bind requires the opt-in",
+			spec:     adminSpec(admin("10.0.0.5:19901"), nil),
+			wantErrs: 1,
+			wantMsg:  "10.0.0.5:19901",
+		},
+		{
+			name:     "hostname admin binds are not loopback",
+			spec:     adminSpec(admin("localhost:19901"), nil),
+			wantErrs: 1,
+			wantMsg:  "allowPublicAdmin",
+		},
+		{name: "public admin bind with the opt-in", spec: adminSpec(admin("0.0.0.0:19901"), optIn(true)), wantErrs: 0},
+		{
+			name:     "explicitly false does not opt in",
+			spec:     adminSpec(admin("0.0.0.0:19901"), optIn(false)),
+			wantErrs: 1,
+			wantMsg:  "allowPublicAdmin",
+		},
+		{
+			name: "other insecure options do not opt in",
+			spec: adminSpec(admin("0.0.0.0:19901"), &proxyv1alpha1.PraxisInsecureOptions{
+				AllowPrivateEndpoints: new(bool),
+			}),
+			wantErrs: 1,
+			wantMsg:  "allowPublicAdmin",
+		},
+		{name: "loopback admin bind with the opt-in stays valid", spec: adminSpec(admin("127.0.0.1:19901"), optIn(true)), wantErrs: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			errs := validateProxySpec(&tt.spec)
+			if len(errs) != tt.wantErrs {
+				t.Fatalf("expected %d errors, got %d: %v", tt.wantErrs, len(errs), errs)
+			}
+			if tt.wantMsg != "" {
+				joined := joinValidationErrors(errs)
+				if !strings.Contains(joined, tt.wantMsg) {
+					t.Errorf("expected error containing %q, got %q", tt.wantMsg, joined)
+				}
+			}
+		})
+	}
 }

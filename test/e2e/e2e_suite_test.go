@@ -3,6 +3,8 @@ package e2e
 import (
 	"testing"
 
+	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -13,7 +15,10 @@ import (
 
 const managerNamespace = "gateway-controller-system"
 
-var k8sClient client.Client
+var (
+	k8sClient  client.Client
+	coreClient coreclient.CoreV1Interface
+)
 
 func TestE2E(t *testing.T) {
 	// Fail rather than skip when there is no cluster. Both go test and ginkgo
@@ -28,6 +33,11 @@ func TestE2E(t *testing.T) {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: utils.NewScheme(t)})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
+	}
+
+	coreClient, err = coreclient.NewForConfig(cfg)
+	if err != nil {
+		t.Fatalf("new core client: %v", err)
 	}
 
 	RegisterFailHandler(Fail)

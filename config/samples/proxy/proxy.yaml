@@ -1,10 +1,17 @@
+# Schema demonstration, not runnable configuration. The inference-policy
+# filter references a Policy: the controller resolves it, renders the native
+# policy filter with config_path, and collects the document, but the
+# documents are not yet published to or mounted in the proxy's container
+# (tracked in separate issues). Applied as-is, the proxy reports Accepted
+# while its Praxis runtime cannot load the policy filter. Use inline
+# filters for a runnable proxy until policy publication lands.
 apiVersion: praxis.io/v1alpha1
 kind: Proxy
 metadata:
   name: ai-gateway
   namespace: praxis-system
 spec:
-  image: ghcr.io/praxis-proxy/praxis:1.5.0
+  image: ghcr.io/praxis-proxy/praxis:0.8.0
   replicas: 3
   service:
     type: LoadBalancer

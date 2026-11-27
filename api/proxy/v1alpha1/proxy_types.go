@@ -118,9 +118,16 @@ type PraxisSecretKeyRef struct {
 
 // PraxisListener defines a single listener on the proxy.
 type PraxisListener struct {
-	// name is the unique listener and generated Service port name.
+	// name is the unique listener and generated container and Service
+	// port name, so it must satisfy Kubernetes port-name validation (an
+	// IANA service name, RFC 6335): lowercase letters, digits, and
+	// hyphens, with at least one letter and no leading, trailing, or
+	// consecutive hyphens. Names like "123" or "http--api" would make
+	// the generated Deployment fail container-port validation.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=15
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]+-)*[a-z0-9]*[a-z][a-z0-9]*(-[a-z0-9]+)*$`
 	Name string `json:"name"`
 
 	// port is the container and Service port.
@@ -130,9 +137,12 @@ type PraxisListener struct {
 	Port int32 `json:"port"`
 
 	// bindAddress is the IP the listener binds to in the native config.
-	// Defaults to "0.0.0.0".
+	// Defaults to "0.0.0.0". Must be an IPv4 or IPv6 address literal; a
+	// hostname cannot be resolved at render time and the Service family
+	// selection could not account for it.
 	// +optional
 	// +kubebuilder:default="0.0.0.0"
+	// +kubebuilder:validation:Pattern="^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])([.](25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}|([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|([0-9A-Fa-f]{1,4}:){1,7}:|([0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}|([0-9A-Fa-f]{1,4}:){1,5}(:[0-9A-Fa-f]{1,4}){1,2}|([0-9A-Fa-f]{1,4}:){1,4}(:[0-9A-Fa-f]{1,4}){1,3}|([0-9A-Fa-f]{1,4}:){1,3}(:[0-9A-Fa-f]{1,4}){1,4}|([0-9A-Fa-f]{1,4}:){1,2}(:[0-9A-Fa-f]{1,4}){1,5}|[0-9A-Fa-f]{1,4}:((:[0-9A-Fa-f]{1,4}){1,6})|:((:[0-9A-Fa-f]{1,4}){1,7}|:))$"
 	BindAddress *string `json:"bindAddress,omitempty"`
 
 	// tls configures downstream TLS material.
@@ -168,6 +178,13 @@ type PraxisInsecureOptions struct {
 	// allowUnboundedBody disables body size limits.
 	// +optional
 	AllowUnboundedBody *bool `json:"allowUnboundedBody,omitempty"`
+
+	// allowPublicAdmin permits the admin interface to bind non-loopback
+	// addresses, rendered as the Praxis allow_public_admin option. The
+	// admin interface performs no authentication, so the controller only
+	// publishes non-loopback admin binds when this is set.
+	// +optional
+	AllowPublicAdmin *bool `json:"allowPublicAdmin,omitempty"`
 }
 
 // ProxyStatus reports published and serving revision state.
@@ -176,15 +193,17 @@ type ProxyStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// desiredRevision is a digest of the complete desired config and inputs.
+	// desiredRevision identifies the rendered config and runtime image/environment inputs.
 	// +optional
 	DesiredRevision string `json:"desiredRevision,omitempty"`
 
-	// publishedRevision is the revision successfully written for this proxy.
+	// publishedRevision identifies the config and workload successfully written for this proxy.
+	// It does not acknowledge that running processes have reloaded the config.
 	// +optional
 	PublishedRevision string `json:"publishedRevision,omitempty"`
 
-	// servingReplicas is the number of replicas confirmed to serve desiredRevision.
+	// servingReplicas is the number of ready replicas reported by the Deployment.
+	// It does not confirm that those replicas have loaded desiredRevision.
 	// +optional
 	ServingReplicas int32 `json:"servingReplicas,omitempty"`
 
@@ -197,6 +216,7 @@ type ProxyStatus struct {
 	AvailableFilters []string `json:"availableFilters,omitempty"`
 
 	// conditions report Accepted, ResolvedRefs, Programmed, and Ready.
+	// Ready reports desired workload readiness, not acknowledgement of a config reload.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -226,6 +246,8 @@ type PraxisListenerStatus struct {
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63",message="proxy name must not exceed 63 characters"
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')",message="proxy name must be a lowercase DNS label (alphanumerics and hyphens, starting and ending with an alphanumeric) because the controller names the generated Service after the proxy"
 
 // Proxy owns the Praxis Deployment, Service, config, assets, and listeners.
 type Proxy struct {

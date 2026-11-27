@@ -2,16 +2,20 @@ package controller
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"unicode/utf8"
 
 	proxyv1alpha1 "github.com/praxis-proxy/gateway-controller/api/proxy/v1alpha1"
 )
 
-const maxConditionMessageLen = 32768
+const (
+	maxConditionMessageLen           = 32768
+	iterativeRequestRouterFilterType = "iterative_request_router"
+)
 
 var terminalFilterTypes = map[string]bool{
-	"iterative_request_router": true,
+	iterativeRequestRouterFilterType: true,
 }
 
 func validateProxySpec(spec *proxyv1alpha1.ProxySpec) []string {
@@ -35,11 +39,30 @@ func validateProxySpec(spec *proxyv1alpha1.ProxySpec) []string {
 	}
 
 	for listenerIdx, listener := range spec.Listeners {
+		if len(listener.FilterChains) == 0 {
+			errs = append(errs, fmt.Sprintf("spec.listeners[%d]: listener %q must reference at least one filter chain", listenerIdx, listener.Name))
+		}
+		// A listener executes its referenced chains as one flattened
+		// pipeline, so an entry name contributed by one chain may not
+		// reappear in another chain of the same listener. The set is
+		// scoped per listener: chains that no single listener references
+		// together may reuse names, and a duplicate confined to one
+		// chain is already reported by the per-chain check above.
+		pipelineEntryNames := make(map[string]string)
 		for refIdx, ref := range listener.FilterChains {
 			chain, ok := chainsByName[ref]
 			if !ok {
 				errs = append(errs, fmt.Sprintf("spec.listeners[%d]: listener %q references undefined chain %q", listenerIdx, listener.Name, ref))
 				continue
+			}
+			for _, entry := range chain.Filters {
+				if first, ok := pipelineEntryNames[entry.Name]; ok {
+					if first != chain.Name {
+						errs = append(errs, fmt.Sprintf("spec.listeners[%d]: duplicate entry name %q in listener %q pipeline (chains %q and %q)", listenerIdx, entry.Name, listener.Name, first, chain.Name))
+					}
+					continue
+				}
+				pipelineEntryNames[entry.Name] = chain.Name
 			}
 			if refIdx < len(listener.FilterChains)-1 && len(chain.Filters) > 0 {
 				last := chain.Filters[len(chain.Filters)-1]
@@ -50,7 +73,34 @@ func validateProxySpec(spec *proxyv1alpha1.ProxySpec) []string {
 		}
 	}
 
+	if adminBindRequiresOptIn(spec.Admin, spec.InsecureOptions) {
+		errs = append(errs, fmt.Sprintf(
+			"spec.admin.address: %q binds the admin interface, which performs no authentication, beyond loopback; set spec.insecureOptions.allowPublicAdmin or bind a loopback address",
+			spec.Admin.Address))
+	}
+
 	return errs
+}
+
+// adminBindRequiresOptIn reports whether the spec binds the admin
+// interface beyond loopback without opting in: the Praxis runtime
+// rejects non-loopback admin binds at startup without its
+// allow_public_admin option, so publishing them would crash-loop the
+// runtime. Loopback follows the runtime's rule — 127.0.0.0/8, ::1, and
+// IPv4-mapped loopback addresses.
+func adminBindRequiresOptIn(admin *proxyv1alpha1.PraxisAdmin, options *proxyv1alpha1.PraxisInsecureOptions) bool {
+	if admin == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(admin.Address)
+	if err != nil {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsLoopback() {
+		return false
+	}
+	return options == nil || options.AllowPublicAdmin == nil || !*options.AllowPublicAdmin
 }
 
 func joinValidationErrors(errs []string) string {

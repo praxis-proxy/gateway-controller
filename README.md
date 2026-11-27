@@ -2,6 +2,35 @@
 
 This controller will manage the Kubernetes based control plane API for Gateway implementations such as AI Gateway.
 
+## Proxy configuration updates
+
+Filter-chain changes update the mounted ConfigMap for Praxis to reload without
+restarting pods. ConfigMap projection is asynchronous, so updates are not immediate.
+Listener, admin, and insecure-option changes trigger a rollout. Replica changes
+scale the Deployment without restarting existing pods. To roll back configuration,
+restore the Proxy spec; a Deployment rollback leaves the live ConfigMap unchanged.
+
+`Ready` and `servingReplicas` describe Deployment readiness. `publishedRevision`
+records completed configuration and workload writes; it does not confirm that each
+pod has reloaded the configuration. Bad configuration at startup prevents the
+pod becoming ready. A failed hot reload leaves Praxis serving its previous
+configuration.
+
+## Policy filter references
+
+Policy filter references render to the native policy filter: the controller
+resolves the referenced `Policy`, copies its filter options into the rendered
+entry, and points `config_path` at `/etc/praxis/policies/{namespace}/{name}.yaml`,
+collecting each referenced document under that path. Publishing the documents to
+the proxy and mounting them into the Praxis container are tracked separately, so
+until then a proxy with a policy reference renders and reports `Accepted=True`
+while its runtime has no policy document to load. A missing `Policy` fails
+rendering with `Accepted=False` and `ResolvedRefs=False` (`ConfigRenderError`),
+and the last valid configuration stays published. The controller does not yet
+watch `Policy` resources, so editing or deleting a referenced `Policy` does not
+re-render the proxy until another event triggers reconciliation (tracked in
+[#20](https://github.com/praxis-proxy/gateway-controller/issues/20)).
+
 ## Development
 
 Run `make help` for the full target list. The common ones:
@@ -18,7 +47,32 @@ make lint              # golangci-lint
 make verify            # fail if generated or derived output is uncommitted
 ```
 
+The e2e suite runs a real Proxy and checks initial HTTP traffic, filter reload
+without pod replacement or container restart, and a listener-port rollout. It uses
+the Kubernetes API Service proxy to reach the workload, so it does not test
+ClusterIP routing through kube-proxy on the default cluster. The IPv6-primary
+spec drives ClusterIP traffic with a pinned client image; create the dual-stack
+cluster it needs with `make kind-up-ipv6`, which makes Services default to IPv6,
+then run `make test-e2e`.
+
+To run locally with Docker:
+
+```console
+make kind-up CONTAINER_ENGINE=docker
+kubectl config use-context kind-gateway-controller-dev
+make test-e2e
+```
+
+`make test-e2e` supplies the digest-pinned Linux/amd64 Praxis image defined in the
+Makefile. ARM hosts need emulation support or a native image override.
+For a local runtime build, load the image into the kind cluster and pass its image
+reference as `PRAXIS_E2E_IMAGE` to Make. Direct Ginkgo or `go test` invocations must
+set that environment variable explicitly. The test allows up to four minutes for
+ConfigMap projection and reload, and fails if prerequisites are unavailable.
+
 Development follows the praxis-proxy [development conventions].
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and pull request requirements.
 
 ## Two-Branch Development Model
 

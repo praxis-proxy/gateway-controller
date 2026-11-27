@@ -4,6 +4,8 @@ IMG ?= ghcr.io/praxis-proxy/gateway-controller:latest
 # is never accidentally running an image meant for a registry.
 KIND_CLUSTER_NAME ?= gateway-controller-dev
 KIND_IMG ?= gateway-controller:dev
+# IPv6-primary dual-stack cluster for the IPv6 e2e spec (kind-up-ipv6).
+KIND_CLUSTER_NAME_IPV6 ?= gateway-controller-ipv6
 
 KUBECTL ?= kubectl
 
@@ -127,9 +129,17 @@ test-integration: manifests generate setup-envtest ginkgo ## Run integration tes
 	echo "$(GINKGO) $(GINKGO_FLAGS) ./test/integration/..."; \
 	$(GINKGO) $(GINKGO_FLAGS) ./test/integration/...
 
+# Published Praxis 0.8.0, linux/amd64. Pin the manifest so the runtime cannot
+# change underneath the traffic/reload assertions. Override for local builds.
+PRAXIS_E2E_IMAGE ?= ghcr.io/praxis-proxy/praxis@sha256:02a5e7f8b7999516e5311cb80deb40b43dd30ef98e0a1a8c92d6d6fdd15ace2b
+
+# Pinned curl 8.9.1 the IPv6-primary spec drives ClusterIP traffic with.
+# Override for local builds or mirroring.
+E2E_CLIENT_IMAGE ?= curlimages/curl@sha256:8addc281f0ea517409209f76832b6ddc2cabc3264feb1ebbec2a2521ffad24e4
+
 .PHONY: test-e2e
 test-e2e: ginkgo ## Run e2e tests against a kind cluster (see kind-up).
-	$(GINKGO) $(GINKGO_FLAGS) --timeout=30m ./test/e2e/...
+	PRAXIS_E2E_IMAGE="$(PRAXIS_E2E_IMAGE)" E2E_CLIENT_IMAGE="$(E2E_CLIENT_IMAGE)" $(GINKGO) $(GINKGO_FLAGS) --timeout=30m ./test/e2e/...
 
 .PHONY: coverage
 coverage: setup-envtest ## Run unit and integration tests with coverage.
@@ -146,16 +156,26 @@ coverage: setup-envtest ## Run unit and integration tests with coverage.
 		./api/... ./cmd/... ./internal/... ./test/integration/... && \
 	go tool cover -func=cover.out | tail -1
 
+KIND_CONFIG ?= hack/kind-config.yaml
+
 .PHONY: kind-up
 kind-up: kind ## Create a kind cluster with the manager built and deployed.
 	$(MAKE) docker-build IMG=$(KIND_IMG)
 	IMG=$(KIND_IMG) CONTAINER_ENGINE=$(CONTAINER_ENGINE) KIND=$(KIND) \
-		KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) bash hack/setup-kind.sh
+		KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) KIND_CONFIG=$(KIND_CONFIG) bash hack/setup-kind.sh
+
+.PHONY: kind-up-ipv6
+kind-up-ipv6: kind ## Create an IPv6-primary dual-stack kind cluster with the manager deployed.
+	$(MAKE) kind-up KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME_IPV6) KIND_CONFIG=hack/kind-config-ipv6.yaml
 
 .PHONY: kind-down
 kind-down: kind ## Delete the kind cluster.
 	IMG=$(KIND_IMG) CONTAINER_ENGINE=$(CONTAINER_ENGINE) KIND=$(KIND) \
 		KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) bash hack/teardown-kind.sh
+
+.PHONY: kind-down-ipv6
+kind-down-ipv6: kind ## Delete the IPv6-primary kind cluster.
+	$(MAKE) kind-down KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME_IPV6)
 
 ##@ Build
 

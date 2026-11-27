@@ -62,3 +62,43 @@ jobs:
       - name: Delete cluster
         if: always()
         run: make kind-down
+
+  test-e2e-ipv6:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      KIND_VERSION: v0.33.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install kind
+        run: |
+          curl -fsSLo ./kind \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-$(go env GOARCH)"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Create IPv6-primary cluster and deploy the manager
+        run: make kind-up-ipv6
+
+      - name: E2E tests
+        run: make test-e2e
+
+      - name: Manager logs
+        if: failure()
+        run: |
+          kubectl --context kind-gateway-controller-ipv6 logs -n gateway-controller-system \
+            -l control-plane=controller-manager --tail=200 || true
+
+      - name: Delete cluster
+        if: always()
+        run: make kind-down-ipv6
